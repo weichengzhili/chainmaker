@@ -1,19 +1,113 @@
-package wal
+package lws
 
-type EntryContainer struct {
+type EntryContainer interface {
+	FirstIndex() uint64
+	LastIndex() uint64
+	GetLogEntry(idx uint64) (*LogEntry, error)
+}
+
+type walContainer struct {
 	wal   *Wal
-	first int //first 第一个log entry的位置
-	last  int //最新log entry的位置
-	// reader *readerRef  //读取日志时候的预读缓存
+	first uint64 //first 第一个log entry的位置
+	last  uint64 //最新log entry的位置
+}
+
+func (wc *walContainer) FirstIndex() uint64 {
+	return wc.first
+}
+
+func (wc *walContainer) LastIndex() uint64 {
+	return wc.last
+}
+
+func (wc *walContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
+	sr, err := wc.wal.findReaderByIndex(idx)
+	if err != nil {
+		return nil, err
+	}
+	sr.Obtain()
+	defer sr.Release()
+	return sr.ReadLogByIndex(idx)
+}
+
+type fileContainer struct {
+	*SegmentReader
+}
+
+func (fc *fileContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
+	return fc.ReadLogByIndex(idx)
 }
 
 type EntryIterator struct {
-	index     int             //迭代器当前的位置
-	container *EntryContainer //日志容器
+	index     uint64         //迭代器当前的位置
+	container EntryContainer //日志容器
 }
 
 type EntryElemnet struct {
-	index     int
-	container *EntryContainer
-	// data      Entry
+	index     uint64
+	container EntryContainer
+	data      *LogEntry
+	err       error
+}
+
+func newEntryIterator(c EntryContainer) *EntryIterator {
+	return &EntryIterator{
+		container: c,
+		index:     c.FirstIndex() - 1,
+	}
+}
+
+func (it *EntryIterator) SkipToFirst() {
+	it.index = it.container.FirstIndex() - 1
+}
+func (it *EntryIterator) SkipToLast() {
+	it.index = it.container.LastIndex() + 1
+}
+func (it *EntryIterator) HasNext() bool {
+	return it.index < it.container.LastIndex()
+}
+func (it *EntryIterator) Next() *EntryElemnet {
+	it.index++
+	return it.element()
+}
+
+// func (it *EntryIterator) Element() *EntryElemnet {
+// 	return it.element()
+// }
+
+func (it *EntryIterator) element() *EntryElemnet {
+	return &EntryElemnet{
+		index:     it.index,
+		container: it.container,
+	}
+}
+
+func (it *EntryIterator) HasPre() bool {
+	return it.index > it.container.FirstIndex()
+}
+func (it *EntryIterator) Previous() *EntryElemnet {
+	it.index--
+	return it.element()
+}
+func (it *EntryIterator) Release() {
+	// it.container.wal.readRelease()
+}
+
+func (ele *EntryElemnet) get() (*LogEntry, error) {
+	if ele.err != nil {
+		return nil, ele.err
+	}
+	if ele.data != nil {
+		return ele.data, nil
+	}
+	ele.data, ele.err = ele.container.GetLogEntry(ele.index)
+	return ele.data, ele.err
+}
+
+func (ele *EntryElemnet) Get() ([]byte, error) {
+	entry, err := ele.get()
+	if err != nil {
+		return nil, err
+	}
+	return entry.Data, nil
 }

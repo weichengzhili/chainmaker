@@ -35,6 +35,14 @@ func NewFile(path string, fileSize int64) (*file_normal, error) {
 	}, nil
 }
 
+func (fn *file_normal) Size() int64 {
+	info, err := fn.Stat()
+	if err != nil {
+		return -1
+	}
+	return info.Size()
+}
+
 func (fn *file_normal) Flush() error {
 	return fn.File.Sync()
 }

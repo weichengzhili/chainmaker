@@ -1,6 +1,7 @@
 package file
 
 import (
+	"io"
 	"os"
 	"syscall"
 
@@ -8,49 +9,67 @@ import (
 )
 
 type mmap_file struct {
-	f       *os.File //映射的文件
-	offset  int64    //映射偏移
-	woffset int64    //写偏移量
-	roffset int64    //读偏移量
-	size    int      //映射大小
-	mmArea  []byte   //映射的区域
+	f      *os.File //映射的文件
+	fSize  int64
+	offset int64 //映射偏移
+	// woffset int64 //写偏移量
+	// roffset int64 //读偏移量
+	mmOff  int64
+	mmSize int    //映射大小
+	mmArea []byte //映射的区域
 }
 
 func NewMmapFile(path string, mmSize int, fileSize int64) (*mmap_file, error) {
-	f1, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err != nil {
-			f1.Close()
+			f.Close()
 		}
 	}()
-	finfo, err := f1.Stat()
+	finfo, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if finfo.Size() < fileSize {
-		err = syscall.Ftruncate(int(f1.Fd()), fileSize)
+	fSize := finfo.Size()
+	if fSize < fileSize {
+		err = syscall.Ftruncate(int(f.Fd()), fileSize)
 		if err != nil {
 			return nil, err
 		}
+		fSize = fileSize
 	}
 
-	buffer, err := syscall.Mmap(int(f1.Fd()), 0, mmSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	buffer, err := syscall.Mmap(int(f.Fd()), 0, mmSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
 		return nil, err
 	}
 
 	return &mmap_file{
-		f:      f1,
-		size:   mmSize,
+		f:      f,
+		fSize:  fSize,
+		mmSize: mmSize,
 		mmArea: buffer,
 	}, nil
 }
 
-func (mf *mmap_file) setOffset(offset int64) {
+func (mf *mmap_file) Seek(offset int64, whence int) (ret int64, err error) {
+	switch whence {
+	case os.SEEK_SET:
+		mf.offset = offset
+	case os.SEEK_CUR:
+		mf.offset += offset
+	case os.SEEK_END:
+		mf.offset = mf.fSize + offset
+	}
+
 	mf.offset = offset
+	if mf.offset < mf.mmOff || mf.offset > mf.mmOff+int64(mf.mmSize) {
+		mf.remap(mf.offset)
+	}
+	return mf.offset, nil
 }
 
 func (mf *mmap_file) remap(offset int64) error {
@@ -62,20 +81,38 @@ func (mf *mmap_file) remap(offset int64) error {
 		}
 	}
 
-	mf.mmArea, err = syscall.Mmap(int(mf.f.Fd()), offset, mf.size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	mf.mmArea, err = syscall.Mmap(int(mf.f.Fd()), offset, mf.mmSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	mf.mmOff = offset
 	return err
 }
 
 func (mf *mmap_file) Write(data []byte) (int, error) {
-	if mf.mmArea == nil {
-		err := mf.remap(mf.offset)
-		if err != nil {
+	var (
+		writeN   int
+		mmEnd    = mf.mmOff + int64(mf.mmSize)
+		writeEnd = mf.offset + int64(len(data))
+	)
+	if writeEnd > mf.fSize {
+		if err := syscall.Ftruncate(int(mf.f.Fd()), writeEnd); err != nil {
 			return 0, err
 		}
+		mf.fSize = writeEnd
 	}
-	//如果写入的数据超越了映射区需要重新映射，再写入
-	mf.woffset += int64(copy(mf.mmArea[mf.woffset:], data))
-	return 0, nil
+
+	for len(data) > writeN {
+		if mf.offset >= mmEnd || mf.mmArea == nil {
+			if err := mf.remap(mf.offset); err != nil {
+				return 0, syscall.EAGAIN
+			}
+			mmEnd = mf.mmOff + int64(mf.mmSize)
+		}
+		writeN += copy(mf.mmArea[mf.offset-mf.mmOff:], data[writeN:])
+		mf.offset += int64(writeN)
+		if mf.offset > mf.fSize {
+			mf.fSize = mf.offset
+		}
+	}
+	return writeN, nil
 }
 
 func (mf *mmap_file) Flush() error {
@@ -86,12 +123,25 @@ func (mf *mmap_file) Flush() error {
 }
 
 func (mf *mmap_file) Read(data []byte) (int, error) {
-	//这里需要有一层判断，如果写映射区包含读的区域，则直接通过映射区读取，否则的话直接从文件读取
-	readN, err := mf.f.ReadAt(data, mf.roffset)
-	if err != nil {
-		return 0, err
+	var (
+		readN int
+		mmEnd = mf.mmOff + int64(mf.mmSize)
+	)
+
+	// for (mf.offset >= mf.mmOff && mf.offset <= mf.fSize) || readN == cap(data) {
+	for mf.offset < mf.fSize && readN < cap(data) {
+		if mf.offset >= mmEnd {
+			if err := mf.remap(mf.offset); err != nil {
+				return readN, syscall.EAGAIN
+			}
+			mmEnd = mf.mmOff + int64(mf.mmSize)
+		}
+		readN += copy(data[readN:], mf.mmArea[mf.offset-mf.mmOff:])
+		mf.offset += int64(readN)
 	}
-	mf.roffset += int64(readN)
+	if mf.offset == mf.fSize {
+		return readN, io.EOF
+	}
 	return readN, nil
 }
 
@@ -105,4 +155,13 @@ func (mf *mmap_file) Close() error {
 		return syscall.Munmap(mf.mmArea)
 	}
 	return nil
+}
+
+func (mf *mmap_file) Size() int64 {
+	mf.f.Sync()
+	info, err := mf.f.Stat()
+	if err != nil {
+		return -1
+	}
+	return info.Size()
 }

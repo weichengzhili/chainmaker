@@ -1,4 +1,4 @@
-package wal
+package lws
 
 type FlushStrategy int
 type FileType int

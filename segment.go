@@ -1,3 +1,7 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package lws
 
 import (
@@ -14,7 +18,6 @@ const (
 	file_mmap_size = 1 << 26
 	checkSumPoly   = 0xD5828281
 	bufferSize     = 1 << 26
-	entryMetaLen   = 8
 
 	lenSize   = 4
 	crc32Size = 4
@@ -77,6 +80,7 @@ type SegmentWriter struct {
 	acc         int //等待刷盘的累计值
 	segmentSize uint64
 	count       int //写入条目的数量
+	closeCh     chan struct{}
 }
 
 func NewSegmentWriter(s *Segment, segmentSize uint64, ft FileType, fs FlushStrategy) (*SegmentWriter, error) {
@@ -85,6 +89,7 @@ func NewSegmentWriter(s *Segment, segmentSize uint64, ft FileType, fs FlushStrat
 		ft:                 ft,
 		fs:                 fs,
 		segmentSize:        segmentSize,
+		closeCh:            make(chan struct{}),
 	}
 	if err := sw.open(); err != nil {
 		return nil, err
@@ -127,11 +132,13 @@ func (sw *SegmentWriter) flushTimeDelay() {
 	t := time.Millisecond * time.Duration(sw.threshold)
 	timer := time.NewTimer(t)
 	for {
-		<-timer.C
-		// sw.buf.Dredge()
-		// sw.buf.Flush()
-		sw.buf.FlushTo(sw.f)
-		timer.Reset(t)
+		select {
+		case <-timer.C:
+			sw.buf.FlushTo(sw.f)
+			timer.Reset(t)
+		case <-sw.closeCh:
+			return
+		}
 	}
 }
 
@@ -203,12 +210,20 @@ func (sw *SegmentWriter) tryFlush(length int) error {
 	case FlushStrategyCapDelay:
 		sw.acc += length
 		if sw.acc >= sw.threshold {
-			return writeAndFlush()
+			err := writeAndFlush()
+			if err == nil {
+				sw.acc = 0
+			}
+			return err
 		}
 	case FlushStrategyQuantityDelay:
 		sw.acc++
 		if sw.acc >= sw.threshold {
-			return writeAndFlush()
+			err := writeAndFlush()
+			if err == nil {
+				sw.acc = 0
+			}
+			return err
 		}
 	}
 	return nil
@@ -218,13 +233,21 @@ func (sw *SegmentWriter) Size() uint64 {
 	return uint64(sw.buf.Size())
 }
 
+// func (sw *SegmentWriter) CanHold(data []byte) bool {
+// 	return sw.Size()+metaSize+uint64(len(data)) <= sw.segmentSize
+// }
+
 func (sw *SegmentWriter) Flush() (err error) {
 	_, err = sw.buf.FlushTo(sw.f)
+	if err == nil {
+		sw.acc = 0
+	}
 	return err
 }
 
 func (sw *SegmentWriter) Close() error {
-	return sw.SegmenterProcessor.close()
+	close(sw.closeCh)
+	return sw.SegmenterProcessor.Close()
 }
 
 type SegmentReader struct {
@@ -240,12 +263,12 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 		err error
 	)
 
-	if err = sr.open(FileTypeMmap, 0); err != nil {
+	if err = sr.open(ft, 0); err != nil {
 		return nil, err
 	}
 
 	if err = sr.loadEntries(); err != nil {
-		sr.close()
+		sr.Close()
 		return nil, err
 	}
 	return sr, nil
@@ -283,15 +306,16 @@ func (sr *SegmentReader) FirstIndex() uint64 {
 	return sr.s.Index
 }
 
+//LastIndex
 func (sr *SegmentReader) LastIndex() uint64 {
-	return sr.s.Index + uint64(len(sr.pos))
+	return sr.s.Index + uint64(len(sr.pos)) - 1
 }
 
-func (sr *SegmentReader) close() {
-	if sr.f != nil {
-		sr.f.Close()
-	}
-}
+// func (sr *SegmentReader) Close() {
+// 	if sr.f != nil {
+// 		sr.f.Close()
+// 	}
+// }
 
 type SegmenterProcessor struct {
 	buf     *buffer      //缓存
@@ -391,7 +415,7 @@ func (sp *SegmenterProcessor) crc32Check(crc32 uint32, data []byte) bool {
 	return sp.crc32er.Checksum(data) == crc32
 }
 
-func (sp *SegmenterProcessor) close() error {
+func (sp *SegmenterProcessor) Close() error {
 	if sp.f != nil {
 		return sp.f.Close()
 	}

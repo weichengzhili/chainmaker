@@ -1,3 +1,7 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package lws
 
 type EntryContainer interface {
@@ -7,7 +11,7 @@ type EntryContainer interface {
 }
 
 type walContainer struct {
-	wal   *Wal
+	wal   *Lws
 	first uint64 //first 第一个log entry的位置
 	last  uint64 //最新log entry的位置
 }
@@ -110,4 +114,19 @@ func (ele *EntryElemnet) Get() ([]byte, error) {
 		return nil, err
 	}
 	return entry.Data, nil
+}
+
+func (ele *EntryElemnet) GetObj() (interface{}, error) {
+	entry, err := ele.get()
+	if err != nil {
+		return nil, err
+	}
+	if entry.Typ == RawCoderType {
+		return entry.Data, nil
+	}
+	coder, err := GetCoder(entry.Typ)
+	if err != nil {
+		return nil, err
+	}
+	return coder.Decode(entry.Data)
 }

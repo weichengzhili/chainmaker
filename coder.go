@@ -1,3 +1,8 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package lws
 
 import (
@@ -13,7 +18,8 @@ var (
 	ErrCoderExist    = errors.New("this type coder has exist")
 	ErrCoderNotExist = errors.New("this type coder not exist")
 
-	DefaultJsonType = int8(-128)
+	RawCoderType    int8 = 0
+	DefaultJsonType int8 = -128
 )
 
 type Coder interface {

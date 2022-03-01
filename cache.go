@@ -1,3 +1,7 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package lws
 
 import (
@@ -21,11 +25,9 @@ func (rc *ReaderCache) GetReader(segmentID uint64) *refReader {
 	rc.rw.RLock()
 	v, ok := rc.readers[segmentID]
 	rc.rw.RUnlock()
-	// v, ok := rc.readers.Load(segmentID)
 	if !ok {
 		return nil
 	}
-	// rr := v.(*refReader)
 	v.access()
 	return v
 }
@@ -38,13 +40,25 @@ func (rc *ReaderCache) PutReader(segmentID uint64, rr *refReader) {
 	}
 	rr.access()
 	rc.readers[segmentID] = rr
-	// rc.readers.Store(segmentID, rr)
 }
 
-func (rc *ReaderCache) DeleteReader(segmentID uint64) {
+func (rc *ReaderCache) DeleteReader(segmentID uint64) *refReader {
 	rc.rw.Lock()
 	defer rc.rw.Unlock()
-	delete(rc.readers, segmentID)
+	if v, ok := rc.readers[segmentID]; ok {
+		delete(rc.readers, segmentID)
+		return v
+	}
+	return nil
+}
+
+func (rc *ReaderCache) CleanReader() {
+	rc.rw.Lock()
+	defer rc.rw.Unlock()
+	for id, v := range rc.readers {
+		v.Close()
+		delete(rc.readers, id)
+	}
 }
 
 func (rr *refReader) Obtain() {

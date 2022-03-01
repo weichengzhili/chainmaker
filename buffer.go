@@ -1,3 +1,7 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package lws
 
 import (
@@ -118,6 +122,9 @@ func (b *buffer) Truncate(n int) error {
 	b.buf = b.buf[:n]
 	if n < b.off {
 		b.off = n
+	}
+	if b.woff > n {
+		b.woff = n
 	}
 	return nil
 }

@@ -1,3 +1,7 @@
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package file
 
 import (
@@ -8,18 +12,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type mmap_file struct {
+type MmapFile struct {
 	f      *os.File //映射的文件
 	fSize  int64
 	offset int64 //映射偏移
-	// woffset int64 //写偏移量
-	// roffset int64 //读偏移量
 	mmOff  int64
 	mmSize int    //映射大小
 	mmArea []byte //映射的区域
 }
 
-func NewMmapFile(path string, mmSize int, fileSize int64) (*mmap_file, error) {
+func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
@@ -47,7 +49,7 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*mmap_file, error) {
 		return nil, err
 	}
 
-	return &mmap_file{
+	return &MmapFile{
 		f:      f,
 		fSize:  fSize,
 		mmSize: mmSize,
@@ -55,7 +57,7 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*mmap_file, error) {
 	}, nil
 }
 
-func (mf *mmap_file) Seek(offset int64, whence int) (ret int64, err error) {
+func (mf *MmapFile) Seek(offset int64, whence int) (ret int64, err error) {
 	switch whence {
 	case os.SEEK_SET:
 		mf.offset = offset
@@ -72,7 +74,7 @@ func (mf *mmap_file) Seek(offset int64, whence int) (ret int64, err error) {
 	return mf.offset, nil
 }
 
-func (mf *mmap_file) remap(offset int64) error {
+func (mf *MmapFile) remap(offset int64) error {
 	var err error
 	if mf.mmArea != nil {
 		err = syscall.Munmap(mf.mmArea)
@@ -86,7 +88,7 @@ func (mf *mmap_file) remap(offset int64) error {
 	return err
 }
 
-func (mf *mmap_file) Write(data []byte) (int, error) {
+func (mf *MmapFile) Write(data []byte) (int, error) {
 	var (
 		writeN   int
 		mmEnd    = mf.mmOff + int64(mf.mmSize)
@@ -115,20 +117,20 @@ func (mf *mmap_file) Write(data []byte) (int, error) {
 	return writeN, nil
 }
 
-func (mf *mmap_file) Flush() error {
+func (mf *MmapFile) Flush() error {
 	if mf.mmArea != nil {
 		return unix.Msync(mf.mmArea, unix.MS_SYNC)
 	}
 	return nil
 }
 
-func (mf *mmap_file) Read(data []byte) (int, error) {
+func (mf *MmapFile) Read(data []byte) (int, error) {
 	var (
-		readN int
-		mmEnd = mf.mmOff + int64(mf.mmSize)
+		readN   int
+		mmEnd   = mf.mmOff + int64(mf.mmSize)
+		readAll = mf.fSize - mf.offset
 	)
 
-	// for (mf.offset >= mf.mmOff && mf.offset <= mf.fSize) || readN == cap(data) {
 	for mf.offset < mf.fSize && readN < cap(data) {
 		if mf.offset >= mmEnd {
 			if err := mf.remap(mf.offset); err != nil {
@@ -139,13 +141,19 @@ func (mf *mmap_file) Read(data []byte) (int, error) {
 		readN += copy(data[readN:], mf.mmArea[mf.offset-mf.mmOff:])
 		mf.offset += int64(readN)
 	}
-	if mf.offset == mf.fSize {
+
+	if int64(readN) > readAll {
+		readN = int(readAll)
+	}
+
+	if mf.offset >= mf.fSize {
+		mf.offset = mf.fSize
 		return readN, io.EOF
 	}
 	return readN, nil
 }
 
-func (mf *mmap_file) Close() error {
+func (mf *MmapFile) Close() error {
 	if mf.f != nil {
 		if err := mf.f.Close(); err != nil {
 			return err
@@ -157,7 +165,7 @@ func (mf *mmap_file) Close() error {
 	return nil
 }
 
-func (mf *mmap_file) Size() int64 {
+func (mf *MmapFile) Size() int64 {
 	mf.f.Sync()
 	info, err := mf.f.Stat()
 	if err != nil {

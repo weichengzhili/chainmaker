@@ -39,15 +39,6 @@ func TestRead(t *testing.T) {
 			t.Log(string(data))
 		}
 	}
-	it.SkipToLast()
-	for it.HasPre() {
-		data, err := it.Previous().GetObj()
-		if err != nil {
-			t.Log("err:", err)
-		} else {
-			t.Log(data)
-		}
-	}
 	l.Close()
 }
 
@@ -55,14 +46,15 @@ func TestWriteFile(t *testing.T) {
 	l, err := Open(testPath, WithSegmentSize(30), WithWriteFileType(FileTypeMmap), WithFilePrex("test_"), WithFlushStrategy(FlushStrategySync, 0), WithFileLimitForPurge(3))
 	require.Nil(t, err)
 	data := []byte("hello world@##########################################################@@")
-	l.WriteToFile("test.log", 0, data)
+	err = l.WriteToFile("test_file.wal", 0, data)
+	require.Nil(t, err)
 	l.Close()
 }
 
 func TestReadFile(t *testing.T) {
 	l, err := Open(testPath, WithSegmentSize(30), WithWriteFileType(FileTypeMmap), WithFilePrex("test_"), WithFlushStrategy(FlushStrategySync, 0), WithFileLimitForPurge(3))
 	require.Nil(t, err)
-	it, err := l.ReadFromFile("test.log")
+	it, err := l.ReadFromFile("test_file.wal")
 	require.Nil(t, err)
 	for it.HasNext() {
 		data, err := it.Next().Get()
@@ -147,3 +139,32 @@ func TestWriteReadObj(t *testing.T) {
 	}
 	l.Close()
 }
+
+func BenchmarkWriteLws(b *testing.B) {
+	l, err := Open("./lws", WithSegmentSize(1<<26), WithWriteFileType(FileTypeNormal), WithFilePrex("test_"), WithFlushStrategy(FlushStrategyManual, 0))
+	if err != nil {
+		panic(err)
+	}
+	data := []byte("hello world")
+	for i := 0; i < b.N; i++ {
+		l.Write(0, data)
+	}
+	l.Flush()
+}
+
+// func BenchmarkWriteWal(b *testing.B) {
+// 	l, err := wal.Open("./wal", &wal.Options{
+// 		SegmentSize: 1 << 26,
+// 		LogFormat:   wal.JSON,
+// 		NoSync:      true,
+// 	})
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	last, _ := l.LastIndex()
+// 	data := []byte("hello world")
+// 	for i := 0; i < b.N; i++ {
+// 		last++
+// 		l.Write(last, data)
+// 	}
+// }

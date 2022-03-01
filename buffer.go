@@ -108,7 +108,8 @@ func (b *buffer) Resize(s int) error {
 	if s < 0 {
 		return errResizeArgument
 	}
-	if n := b.shouldGrow(s); n > 0 {
+	diff := s - b.Size()
+	if n := b.shouldGrow(diff); n > 0 {
 		b.grow(n)
 	}
 	b.buf = b.buf[:s]

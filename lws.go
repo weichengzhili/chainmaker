@@ -109,7 +109,12 @@ func (l *Lws) open(opt ...Opt) error {
 	}
 	currentSegment := l.segments[len(l.segments)-1]
 	l.currentSegmentID = currentSegment.ID
-	l.sw, err = NewSegmentWriter(currentSegment, l.opts.SegmentSize, l.opts.Ft, l.opts.Fs)
+	l.sw, err = NewSegmentWriter(currentSegment, WriterOptions{
+		SegmentSize: l.opts.SegmentSize,
+		Ft:          l.opts.Ft,
+		Fs:          l.opts.Fs,
+		Fv:          l.opts.FlushValue,
+	})
 	if err != nil {
 		return err
 	}
@@ -309,21 +314,24 @@ func (l *Lws) Purge(mod PurgeMod) error {
  @return {error} 错误信息
 */
 func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
+	//先检测下file是不是符合wal规范
 	reg, err := regexp.Compile(fmt.Sprintf(fileReg, l.opts.FilePrefix, l.opts.FileExtension))
 	if err != nil {
 		return err
 	}
 	if reg.Match([]byte(file)) {
-		return errors.New("the file name is invalid: file name cant match with wal file")
+		return errors.New("the file name is invalid: filename should circumvent the wal filename rules")
 	}
 	t, data, err := l.encodeObj(typ, obj)
 	if err != nil {
 		return err
 	}
-	//先检测下file是不是符合wal规范
 	sw, err := NewSegmentWriter(&Segment{
 		Path: path.Join(l.path, file),
-	}, 0, FileTypeNormal, FlushStrategySync)
+	}, WriterOptions{
+		Ft: l.opts.Ft,
+		Fs: FlushStrategySync,
+	}) //0, l.opts.Ft, FlushStrategySync)
 	if err != nil {
 		return err
 	}
@@ -335,7 +343,7 @@ func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
 	sr, err := NewSegmentReader(&Segment{
 		Path:  path.Join(l.path, file),
 		Index: 1,
-	}, FileTypeNormal)
+	}, l.opts.Ft)
 	if err != nil {
 		return nil, err
 	}

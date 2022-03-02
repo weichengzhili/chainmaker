@@ -62,7 +62,7 @@ type crc32er struct {
 }
 
 func (crc *crc32er) Checksum(data []byte) uint32 {
-	return 0 //crc32.Checksum(data, crc.table)
+	return crc32.Checksum(data, crc.table)
 }
 
 func newCrc32er(poly uint32) *crc32er {
@@ -75,7 +75,7 @@ func newCrc32er(poly uint32) *crc32er {
 type SegmentWriter struct {
 	*SegmenterProcessor
 	ft          FileType
-	fs          FlushStrategy //刷盘策略 flushStrategy
+	wf          WriteFlag //刷盘策略
 	threshold   int
 	acc         int //等待刷盘的累计值
 	segmentSize uint64
@@ -86,7 +86,7 @@ type SegmentWriter struct {
 type WriterOptions struct {
 	SegmentSize uint64
 	Ft          FileType
-	Fs          FlushStrategy
+	Wf          WriteFlag
 	Fv          int
 }
 
@@ -94,7 +94,7 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
 		SegmenterProcessor: newSegmentProcessor(s),
 		ft:                 opt.Ft,
-		fs:                 opt.Fs,
+		wf:                 opt.Wf,
 		segmentSize:        opt.SegmentSize,
 		threshold:          opt.Fv,
 		closeCh:            make(chan struct{}),
@@ -130,19 +130,24 @@ func (sw *SegmentWriter) readAndCheck() (err error) {
 }
 
 func (sw *SegmentWriter) startFlushWorker() {
-	switch sw.fs {
-	case FlushStrategyTimeDelay:
+	if sw.wf&(^WF_SYNCWRITE) == WF_TIMEDFLUSH {
 		go sw.flushTimeDelay()
 	}
 }
 
 func (sw *SegmentWriter) flushTimeDelay() {
+	if sw.threshold <= 0 {
+		sw.threshold = timeDelay
+	}
 	t := time.Millisecond * time.Duration(sw.threshold)
 	timer := time.NewTimer(t)
 	for {
 		select {
 		case <-timer.C:
-			sw.buf.FlushTo(sw.f)
+			if sw.acc == 0 {
+				continue
+			}
+			sw.Flush()
 			timer.Reset(t)
 		case <-sw.closeCh:
 			return
@@ -158,11 +163,13 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 	if sw.s.ID == s.ID {
 		return nil
 	}
-	if _, err := sw.buf.FlushTo(sw.f); err != nil {
+	if err := sw.Flush(); err != nil {
 		return err
 	}
+	old := sw.s
 	sw.s = s
 	if err := sw.open(); err != nil {
+		sw.s = old
 		return err
 	}
 	sw.buf.Reset()
@@ -201,39 +208,31 @@ func (sw *SegmentWriter) writeToBuffer(t int8, data []byte) int {
 }
 
 func (sw *SegmentWriter) tryFlush(length int) error {
-	writeAndFlush := func() error {
+	// syncWrite := sw.wf&WF_SYNCWRITE == WF_SYNCWRITE
+	// flush := func() error {
+	// 	if !syncWrite {
+	// 		if _, err := sw.buf.WriteTo(sw.f); err != nil {
+	// 			sw.buf.Seek(-length)
+	// 			return err
+	// 		}
+	// 	}
+	// 	return sw.f.Flush()
+	// }
+
+	if sw.wf&WF_SYNCWRITE == WF_SYNCWRITE {
 		if _, err := sw.buf.WriteTo(sw.f); err != nil {
 			sw.buf.Seek(-length)
 			return err
 		}
-		//flush可以不做检测吗？我认为可以
-		if err := sw.f.Flush(); err != nil {
-			return err
-		}
-		return nil
 	}
-	switch sw.fs {
-	case FlushStrategySync:
-		return writeAndFlush()
-	case FlushStrategyCapDelay:
-		sw.acc += length
-		if sw.acc >= sw.threshold {
-			err := writeAndFlush()
-			if err == nil {
-				sw.acc = 0
-			}
-			return err
-		}
-	case FlushStrategyQuantityDelay:
-		sw.acc++
-		if sw.acc >= sw.threshold {
-			err := writeAndFlush()
-			if err == nil {
-				sw.acc = 0
-			}
-			return err
-		}
+	if sw.wf&WF_SYNCFLUSH == WF_SYNCFLUSH {
+		return sw.Flush()
 	}
+	sw.acc++
+	if sw.wf&WF_QUOTAFLUSH == WF_QUOTAFLUSH && sw.acc >= sw.threshold {
+		return sw.Flush()
+	}
+
 	return nil
 }
 
@@ -241,12 +240,13 @@ func (sw *SegmentWriter) Size() uint64 {
 	return uint64(sw.buf.Size())
 }
 
-// func (sw *SegmentWriter) CanHold(data []byte) bool {
-// 	return sw.Size()+metaSize+uint64(len(data)) <= sw.segmentSize
-// }
-
-func (sw *SegmentWriter) Flush() (err error) {
-	_, err = sw.buf.FlushTo(sw.f)
+func (sw *SegmentWriter) Flush() error {
+	if sw.wf&WF_SYNCWRITE != WF_SYNCWRITE {
+		if _, err := sw.buf.WriteTo(sw.f); err != nil {
+			return err
+		}
+	}
+	err := sw.f.Flush()
 	if err == nil {
 		sw.acc = 0
 	}
@@ -303,11 +303,17 @@ func (sr *SegmentReader) ReadLogByIndex(index uint64) (*LogEntry, error) {
 	if pos < 0 || pos > len(sr.pos) {
 		return nil, ErrSegmentIndex
 	}
-	return sr.readOneEntryFrom(sr.pos[pos]), nil
+	return sr.readOneEntryFrom(sr.pos[pos], false), nil
 }
 
-func (sr *SegmentReader) readOneEntryFrom(pos int) *LogEntry {
-	return sr.readLog(pos)
+func (sr *SegmentReader) readOneEntryFrom(pos int, copyData bool) *LogEntry {
+	le, ok := sr.readLog(pos)
+	if ok && copyData {
+		data := make([]byte, len(le.Data))
+		copy(data, le.Data)
+		le.Data = data
+	}
+	return le
 }
 
 func (sr *SegmentReader) FirstIndex() uint64 {
@@ -372,7 +378,7 @@ func (sp *SegmenterProcessor) traverseLogEntries(call func(*posEntry) bool) {
 	size := sp.buf.Size()
 	pos := 0
 	for pos < size {
-		le := sp.readLog(pos)
+		le, _ := sp.readLog(pos)
 		if call(&posEntry{
 			LogEntry: le,
 			pos:      pos,
@@ -398,29 +404,46 @@ func (sp *SegmenterProcessor) writeLog(t int8, data []byte) int {
 	return totalLen
 }
 
-func (sp *SegmenterProcessor) readLog(pos int) *LogEntry {
+func (sp *SegmenterProcessor) readLog(pos int) (_ *LogEntry, ok bool) {
 	lbz := sp.buf.ReadAt(pos, lenSize)
 	if lbz == nil {
-		return nil
+		return
 	}
 	l := int(sp.deserializeUint32(lbz))
 	data := sp.buf.ReadAt(pos+lenSize, l)
 	if len(data) == 0 {
-		return nil
+		return
 	}
 	c := sp.deserializeUint32(data)
-	cp := make([]byte, len(data)-crc32Size-typeSize)
-	copy(cp, data[crc32Size+typeSize:])
 	return &LogEntry{
 		Len:   l,
 		Crc32: c,
 		Typ:   int8(data[crc32Size]),
-		Data:  cp,
-	}
+		Data:  data[crc32Size+typeSize:],
+	}, true
 }
 
+// func (sp *SegmenterProcessor) readLog(pos int) *LogEntry {
+// 	lbz := sp.buf.ReadAt(pos, lenSize)
+// 	if lbz == nil {
+// 		return nil
+// 	}
+// 	l := int(sp.deserializeUint32(lbz))
+// 	data := sp.buf.ReadAt(pos+lenSize, l)
+// 	if len(data) == 0 {
+// 		return nil
+// 	}
+// 	c := sp.deserializeUint32(data)
+// 	return &LogEntry{
+// 		Len:   l,
+// 		Crc32: c,
+// 		Typ:   int8(data[crc32Size]),
+// 		Data:  data[crc32Size+typeSize:],
+// 	}
+// }
+
 func (sp *SegmenterProcessor) crc32Check(crc32 uint32, data []byte) bool {
-	return true //sp.crc32er.Checksum(data) == crc32
+	return sp.crc32er.Checksum(data) == crc32
 }
 
 func (sp *SegmenterProcessor) Close() error {

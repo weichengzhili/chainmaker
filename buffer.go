@@ -145,13 +145,13 @@ func (b *buffer) WriteTo(wr io.Writer) (int, error) {
 	return n, err
 }
 
-func (b *buffer) FlushTo(wfr WriteFlusher) (int, error) {
-	n, err := b.WriteTo(wfr)
-	if err != nil {
-		return n, err
-	}
-	return n, wfr.Flush()
-}
+// func (b *buffer) FlushTo(wfr WriteFlusher) (int, error) {
+// 	n, err := b.WriteTo(wfr)
+// 	if err != nil {
+// 		return n, err
+// 	}
+// 	return n, wfr.Flush()
+// }
 
 func (b *buffer) shouldGrow(n int) int {
 	return n - b.Remain()

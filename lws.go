@@ -19,12 +19,15 @@ import (
 )
 
 var (
+	timeDelay   = 1000 //ms
 	defaultOpts = Options{
 		SegmentSize:   1 << 26,
 		Ft:            FileTypeMmap,
 		FileExtension: "wal",
-		Fs:            FlushStrategySync,
+		Wf:            WF_TIMEDFLUSH,
+		FlushQuota:    timeDelay,
 	}
+
 	fileReg             = `%s\d{5}_\d+\.%s`
 	ErrPurgeWorkExisted = errors.New("purge work has been performed")
 	ErrPurgeNotReached  = errors.New("purge threshold not reached")
@@ -112,18 +115,14 @@ func (l *Lws) open(opt ...Opt) error {
 	l.sw, err = NewSegmentWriter(currentSegment, WriterOptions{
 		SegmentSize: l.opts.SegmentSize,
 		Ft:          l.opts.Ft,
-		Fs:          l.opts.Fs,
-		Fv:          l.opts.FlushValue,
+		Wf:          l.opts.Wf,
+		Fv:          l.opts.FlushQuota,
 	})
 	if err != nil {
 		return err
 	}
 	l.lastIndex = currentSegment.Index + uint64(l.sw.EntryCount())
 	l.firstIndex = l.segments[0].Index
-
-	if l.opts.LogEntryCountLimitForPurge > 0 || l.opts.LogFileLimitForPurge > 0 {
-		go l.purge()
-	}
 
 	return nil
 }
@@ -234,7 +233,7 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	)
 	if l.sw.Size() > l.opts.SegmentSize {
 		writeNotice |= newFile
-		if err := l.rollover(); err != nil {
+		if err = l.rollover(); err != nil {
 			return err
 		}
 	}
@@ -330,7 +329,7 @@ func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
 		Path: path.Join(l.path, file),
 	}, WriterOptions{
 		Ft: l.opts.Ft,
-		Fs: FlushStrategySync,
+		Wf: WF_SYNCFLUSH,
 	}) //0, l.opts.Ft, FlushStrategySync)
 	if err != nil {
 		return err
@@ -512,7 +511,8 @@ func (l *Lws) cleanStartUp() {
 			if t&newFile != 0 {
 				fileCount++
 			}
-			if entryCount > uint64(l.opts.LogEntryCountLimitForPurge) || fileCount > l.opts.LogFileLimitForPurge {
+			if (l.opts.LogEntryCountLimitForPurge > 0 && entryCount > uint64(l.opts.LogEntryCountLimitForPurge)) ||
+				(l.opts.LogFileLimitForPurge > 0 && fileCount > l.opts.LogFileLimitForPurge) {
 				l.purge()
 				reassign()
 			}

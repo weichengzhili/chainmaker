@@ -7,6 +7,16 @@ package lws
 type FlushStrategy int
 type FileType int
 
+type WriteFlag int
+
+const (
+	WF_SYNCWRITE WriteFlag = 1 //同步写，写系统不刷盘
+
+	WF_TIMEDFLUSH WriteFlag = (1<<iota - 1) << 1 //定时刷盘
+	WF_QUOTAFLUSH                                //日志写入数量刷盘
+	WF_SYNCFLUSH                                 //同步刷盘
+)
+
 const (
 	FlushStrategySync          FlushStrategy = 1 << iota //同步刷盘
 	FlushStrategyManual                                  //手动刷盘
@@ -21,22 +31,22 @@ const (
 )
 
 type Options struct {
-	Fs                         FlushStrategy //刷盘策略(1同步刷盘 2手动刷盘 3延迟刷盘,可以更细化) 默认同步刷盘
-	FlushValue                 int           //刷盘阈值，达到阈值再进行刷盘
-	SegmentSize                uint64        //文件的大小限制 默认64M 代表不限制
-	Ft                         FileType      //文件类型(1 普通文件 2 mmap) 默认1
-	LogFileLimitForPurge       int           //存在日志文件限制
-	LogEntryCountLimitForPurge int           //存在日志条目限制
+	Wf                         WriteFlag
+	FlushQuota                 int
+	SegmentSize                uint64   //文件的大小限制 默认64M 代表不限制
+	Ft                         FileType //文件类型(1 普通文件 2 mmap) 默认1
+	LogFileLimitForPurge       int      //存在日志文件限制
+	LogEntryCountLimitForPurge int      //存在日志条目限制
 	FilePrefix                 string
 	FileExtension              string
 }
 
 type Opt func(*Options)
 
-func WithFlushStrategy(t FlushStrategy, v int) Opt {
+func WithWriteFlag(wf WriteFlag, quota int) Opt {
 	return func(o *Options) {
-		o.Fs = t
-		o.FlushValue = v
+		o.Wf = wf
+		o.FlushQuota = quota
 	}
 }
 

@@ -22,7 +22,7 @@ var (
 	timeDelay   = 1000 //ms
 	defaultOpts = Options{
 		SegmentSize:   1 << 26,
-		Ft:            FileTypeMmap,
+		Ft:            FT_MMAP,
 		FileExtension: "wal",
 		Wf:            WF_TIMEDFLUSH,
 		FlushQuota:    timeDelay,
@@ -361,7 +361,7 @@ func (l *Lws) findReaderByIndex(idx uint64) (*refReader, error) {
 	if rr != nil {
 		return rr, nil
 	}
-	sr, err := NewSegmentReader(s, FileTypeMmap)
+	sr, err := NewSegmentReader(s, FT_MMAP)
 	if err != nil {
 		return nil, err
 	}

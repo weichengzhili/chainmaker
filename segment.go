@@ -351,9 +351,9 @@ func (sp *SegmenterProcessor) open(ft FileType, truncateSize int64) error {
 		err error
 	)
 	switch ft {
-	case FileTypeNormal:
+	case FT_NORMAL:
 		f, err = file.NewFile(sp.s.Path, truncateSize)
-	case FileTypeMmap:
+	case FT_MMAP:
 		f, err = file.NewMmapFile(sp.s.Path, file_mmap_size, truncateSize)
 	default:
 		err = ErrFileTypeNotSupport

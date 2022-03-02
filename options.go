@@ -18,25 +18,17 @@ const (
 )
 
 const (
-	FlushStrategySync          FlushStrategy = 1 << iota //同步刷盘
-	FlushStrategyManual                                  //手动刷盘
-	FlushStrategyTimeDelay                               //按照时间延迟刷盘
-	FlushStrategyCapDelay                                //写入特定容量再刷盘
-	FlushStrategyQuantityDelay                           //依据写入日志条目数量刷盘
-)
-
-const (
-	FileTypeNormal FileType = iota
-	FileTypeMmap
+	FT_NORMAL FileType = iota
+	FT_MMAP
 )
 
 type Options struct {
-	Wf                         WriteFlag
-	FlushQuota                 int
-	SegmentSize                uint64   //文件的大小限制 默认64M 代表不限制
-	Ft                         FileType //文件类型(1 普通文件 2 mmap) 默认1
-	LogFileLimitForPurge       int      //存在日志文件限制
-	LogEntryCountLimitForPurge int      //存在日志条目限制
+	Wf                         WriteFlag //写日志标识
+	FlushQuota                 int       //刷盘限定值
+	SegmentSize                uint64    //文件的大小限制 默认64M 代表不限制
+	Ft                         FileType  //文件类型(1 普通文件 2 mmap) 默认1
+	LogFileLimitForPurge       int       //存在日志文件限制
+	LogEntryCountLimitForPurge int       //存在日志条目限制
 	FilePrefix                 string
 	FileExtension              string
 }

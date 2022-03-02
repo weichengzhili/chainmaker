@@ -12,7 +12,7 @@ lws，日志写入系统，用于日志的写入和迭代读取
 * 支持对特定文件的写入
 * 支持对所有日志的遍历读取，以及指定特定文件读取
 * 支持对日志数据的定制化序列化和反序列化
-* 针对不同场景，支持不同的日志刷盘策略（同步刷盘，手动刷盘，延时刷盘，写入日志累计条数刷盘，写入日志累计大小刷盘）
+* 针对不同场景，支持不同的日志写入策略（同步写入:日志先写缓存在同步写到系统 同步刷盘:将日志数据进行刷盘 限额刷盘:累计写入x条日志再刷盘 定时刷盘:定时将日志数据刷到磁盘），默认情况下lws将数据写入缓存，再以每秒写入并新到磁盘
 * 日志文件的自动清理机制
 * 底层抽象性多种文件使用方式，包括不限于普通文件方式，内存映射方式（推荐/默认），socket远程发送方式...
   
@@ -20,8 +20,8 @@ lws，日志写入系统，用于日志的写入和迭代读取
 1. lws可选参数如下：
 ```
 type Options struct {
-	Fs                         FlushStrategy //刷盘策略(1同步刷盘 2手动刷盘 3时间延迟刷盘 4写入日志累计大小刷盘 5写入日志累计条数刷盘) 默认同步刷盘
-	FlushValue                 int           //刷盘阈值，达到阈值再进行刷盘
+	Wf                         WriteFlag //写日志标识  默认是定时1000ms刷盘
+	FlushQuota                 int       //刷盘限定值 1000
 	SegmentSize                uint64        //文件的大小限制 默认64M 0 代表不限制
 	Ft                         FileType      //文件类型(1 普通文件 2 mmap) 默认映射方式
 	LogFileLimitForPurge       int           //日志文件数量限制
@@ -44,7 +44,7 @@ type Options struct {
 3. 使用实例
    * 实例1
    ```
-    l, err := Open("/root/go/src/chainmaker.org/lws/log", WithSegmentSize(30), WithFilePrex("test_"), WithFlushStrategy(FlushStrategyManual, 0), WithFileLimitForPurge(3))
+    l, err := Open("/root/go/src/chainmaker.org/lws/log", WithSegmentSize(30), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(3))
 	if err != nil {
         return err
     }
@@ -92,7 +92,7 @@ type Options struct {
 
     err := RegisterCoder(&StudentCoder{})
 	require.Nil(t, err)
-	l, err := Open("/root/go/src/chainmaker.org/lws/log", WithSegmentSize(30), WithWriteFileType(FileTypeMmap), WithFilePrex("test_"))
+	l, err := Open("/root/go/src/chainmaker.org/lws/log", WithSegmentSize(30), WithFilePrex("test_"))
 	require.Nil(t, err)
 	s := Student{
 		Name:  "lucy",

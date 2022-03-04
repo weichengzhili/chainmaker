@@ -2,6 +2,10 @@
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 
 package lws
 
@@ -17,6 +21,7 @@ var (
 
 	ErrCoderExist    = errors.New("this type coder has exist")
 	ErrCoderNotExist = errors.New("this type coder not exist")
+	ErrCodeSysType   = errors.New("the coder type is system reservation type")
 
 	RawCoderType    int8 = 0
 	DefaultJsonType int8 = -128
@@ -28,7 +33,17 @@ type Coder interface {
 	Decode([]byte) (interface{}, error)
 }
 
+func checkCoderType(t int8) error {
+	if t <= RawCoderType {
+		return ErrCodeSysType
+	}
+	return nil
+}
+
 func RegisterCoder(c Coder) error {
+	if err := checkCoderType(c.Type()); err != nil {
+		return err
+	}
 	locker.Lock()
 	defer locker.Unlock()
 	if _, exist := coderMapping[c.Type()]; exist {

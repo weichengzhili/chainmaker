@@ -45,19 +45,19 @@ const (
 
 type Lws struct {
 	mu               sync.Mutex
-	path             string //文件路径
+	path             string //base path of log files
 	opts             Options
-	sw               *SegmentWriter //日志写入器
-	currentSegmentID uint64         //最新段/文件ID
+	sw               *SegmentWriter //lws writes log data through it
+	currentSegmentID uint64         //the id of latest segment
 	firstIndex       uint64
-	lastIndex        uint64
+	lastIndex        uint64 //the index for next log entry
 	segmentRW        sync.RWMutex
-	segments         []*Segment
-	readCache        ReaderCache //缓存，用于缓存读过的数据，采用lru&时间清除
+	segments         []*Segment  //segment meata info
+	readCache        ReaderCache //cache data wait to be readed
 	cond             *sync.Cond
-	readCount        int //用于记录当前进行的日志访问者，如果有读者，清理数据的时候要等待读取完成
-	purging          int32
-	writeNoticeCh    chan writeNoticeType
+	readCount        int                  //record the count of reading the wal file
+	purging          int32                //mark pure worker is doing
+	writeNoticeCh    chan writeNoticeType //notice purge go routine that a new log/a new file has been writed
 	closeCh          chan struct{}
 }
 
@@ -357,19 +357,15 @@ func (l *Lws) findReaderByIndex(idx uint64) (*refReader, error) {
 	if s == nil {
 		return nil, errors.New("idx out of range")
 	}
-	rr := l.readCache.GetReader(s.ID)
-	if rr != nil {
-		return rr, nil
-	}
-	sr, err := NewSegmentReader(s, FT_MMAP)
-	if err != nil {
-		return nil, err
-	}
-	rr = &refReader{
-		SegmentReader: sr,
-	}
-	l.readCache.PutReader(s.ID, rr)
-	return rr, nil
+	return l.readCache.GetAndNewReader(s.ID, func() (*refReader, error) {
+		sr, err := NewSegmentReader(s, l.opts.Ft)
+		if err != nil {
+			return nil, err
+		}
+		return &refReader{
+			SegmentReader: sr,
+		}, nil
+	})
 }
 
 func (l *Lws) findSegmentByIndex(idx uint64) *Segment {

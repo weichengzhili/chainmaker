@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 package file
 
 import (
+	"errors"
 	"io"
 	"os"
 	"syscall"
@@ -12,11 +13,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	OsPageSize     = os.Getpagesize()
+	OsPageSizeMask = OsPageSize - 1
+)
+
 type MmapFile struct {
 	f      *os.File //映射的文件
-	fSize  int64
-	offset int64 //映射偏移
-	mmOff  int64
+	fSize  int64    //文件大小
+	offset int64    //读写偏移
+	mmapInfo
+}
+
+type mmapInfo struct {
+	mmOff  int64  //映射偏移
 	mmSize int    //映射大小
 	mmArea []byte //映射的区域
 }
@@ -44,33 +54,47 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
 		fSize = fileSize
 	}
 
-	buffer, err := syscall.Mmap(int(f.Fd()), 0, mmSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	if err != nil {
-		return nil, err
-	}
+	mmi, err := mmap(int(f.Fd()), 0, mmSize)
 
 	return &MmapFile{
-		f:      f,
-		fSize:  fSize,
-		mmSize: mmSize,
-		mmArea: buffer,
+		f:        f,
+		fSize:    fSize,
+		mmapInfo: mmi,
+	}, nil
+}
+
+func mmap(fd int, offset int64, size int) (_ mmapInfo, err error) {
+	if size&OsPageSizeMask != 0 {
+		size = (size + OsPageSize) & OsPageSize
+	}
+	offset = offset & int64(OsPageSize)
+
+	var (
+		data []byte
+	)
+	data, err = syscall.Mmap(fd, offset, size, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	if err != nil {
+		return
+	}
+	return mmapInfo{
+		mmArea: data,
+		mmSize: size,
+		mmOff:  offset,
 	}, nil
 }
 
 func (mf *MmapFile) Seek(offset int64, whence int) (ret int64, err error) {
 	switch whence {
-	case os.SEEK_SET:
-		mf.offset = offset
-	case os.SEEK_CUR:
-		mf.offset += offset
-	case os.SEEK_END:
-		mf.offset = mf.fSize + offset
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += mf.offset
+	case io.SeekEnd:
+		offset += mf.fSize
 	}
-
+	if offset < 0 {
+		return 0, errors.New("seek offset invaild")
+	}
 	mf.offset = offset
-	if mf.offset < mf.mmOff || mf.offset > mf.mmOff+int64(mf.mmSize) {
-		mf.remap(mf.offset)
-	}
 	return mf.offset, nil
 }
 
@@ -81,10 +105,13 @@ func (mf *MmapFile) remap(offset int64) error {
 		if err != nil {
 			return err
 		}
+		mf.mmArea = nil
 	}
-
-	mf.mmArea, err = syscall.Mmap(int(mf.f.Fd()), offset, mf.mmSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	mf.mmOff = offset
+	mmi, err := mmap(int(mf.f.Fd()), offset, mf.mmSize)
+	if err == nil {
+		mf.mmArea = mmi.mmArea
+		mf.mmOff = mmi.mmOff
+	}
 	return err
 }
 

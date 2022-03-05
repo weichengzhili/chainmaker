@@ -9,6 +9,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"sync"
 	"time"
 
 	"chainmaker.org/chainmaker/lws/file"
@@ -73,7 +74,7 @@ func newCrc32er(poly uint32) *crc32er {
 }
 
 type SegmentWriter struct {
-	*SegmenterProcessor
+	*SegmentProcessor
 	ft          FileType
 	wf          WriteFlag //刷盘策略
 	threshold   int
@@ -81,6 +82,7 @@ type SegmentWriter struct {
 	segmentSize uint64
 	count       int //写入条目的数量
 	closeCh     chan struct{}
+	writeLocker sync.Mutex //非同步写情况下，可能会导致并发写相同数据
 }
 
 type WriterOptions struct {
@@ -92,12 +94,12 @@ type WriterOptions struct {
 
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
-		SegmenterProcessor: newSegmentProcessor(s),
-		ft:                 opt.Ft,
-		wf:                 opt.Wf,
-		segmentSize:        opt.SegmentSize,
-		threshold:          opt.Fv,
-		closeCh:            make(chan struct{}),
+		SegmentProcessor: newSegmentProcessor(s),
+		ft:               opt.Ft,
+		wf:               opt.Wf,
+		segmentSize:      opt.SegmentSize,
+		threshold:        opt.Fv,
+		closeCh:          make(chan struct{}),
 	}
 	if err := sw.open(); err != nil {
 		return nil, err
@@ -110,7 +112,7 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 }
 
 func (sw *SegmentWriter) open() error {
-	return sw.SegmenterProcessor.open(sw.ft, int64(sw.segmentSize))
+	return sw.SegmentProcessor.open(sw.ft, int64(sw.segmentSize))
 }
 
 func (sw *SegmentWriter) readAndCheck() (err error) {
@@ -172,13 +174,23 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 		sw.s = old
 		return err
 	}
+	sw.count = 0
 	sw.buf.Reset()
 	return nil
 }
 
 func (sw *SegmentWriter) Write(t int8, data []byte) (int, error) {
+	sw.writeLocker.Lock()
 	l := sw.writeToBuffer(t, data)
-	err := sw.tryFlush(l)
+	if sw.wf&WF_SYNCWRITE == WF_SYNCWRITE {
+		if _, err := sw.buf.WriteTo(sw.f); err != nil {
+			sw.buf.Seek(-l)
+			sw.writeLocker.Unlock()
+			return 0, err
+		}
+	}
+	sw.writeLocker.Unlock()
+	err := sw.tryFlush()
 	if err != nil {
 		return 0, nil
 	}
@@ -204,27 +216,11 @@ func (sw *SegmentWriter) directWrite(t int8, data []byte) (int, error) {
 }
 
 func (sw *SegmentWriter) writeToBuffer(t int8, data []byte) int {
+	sw.count++
 	return sw.writeLog(t, data)
 }
 
-func (sw *SegmentWriter) tryFlush(length int) error {
-	// syncWrite := sw.wf&WF_SYNCWRITE == WF_SYNCWRITE
-	// flush := func() error {
-	// 	if !syncWrite {
-	// 		if _, err := sw.buf.WriteTo(sw.f); err != nil {
-	// 			sw.buf.Seek(-length)
-	// 			return err
-	// 		}
-	// 	}
-	// 	return sw.f.Flush()
-	// }
-
-	if sw.wf&WF_SYNCWRITE == WF_SYNCWRITE {
-		if _, err := sw.buf.WriteTo(sw.f); err != nil {
-			sw.buf.Seek(-length)
-			return err
-		}
-	}
+func (sw *SegmentWriter) tryFlush() error {
 	if sw.wf&WF_SYNCFLUSH == WF_SYNCFLUSH {
 		return sw.Flush()
 	}
@@ -242,7 +238,10 @@ func (sw *SegmentWriter) Size() uint64 {
 
 func (sw *SegmentWriter) Flush() error {
 	if sw.wf&WF_SYNCWRITE != WF_SYNCWRITE {
-		if _, err := sw.buf.WriteTo(sw.f); err != nil {
+		sw.writeLocker.Lock()
+		_, err := sw.buf.WriteTo(sw.f)
+		sw.writeLocker.Unlock()
+		if err != nil {
 			return err
 		}
 	}
@@ -255,18 +254,18 @@ func (sw *SegmentWriter) Flush() error {
 
 func (sw *SegmentWriter) Close() error {
 	close(sw.closeCh)
-	return sw.SegmenterProcessor.Close()
+	return sw.SegmentProcessor.Close()
 }
 
 type SegmentReader struct {
-	*SegmenterProcessor
+	*SegmentProcessor
 	pos []int //记录每个entry的起始位置
 }
 
 func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 	var (
 		sr = &SegmentReader{
-			SegmenterProcessor: newSegmentProcessor(s),
+			SegmentProcessor: newSegmentProcessor(s),
 		}
 		err error
 	)
@@ -325,27 +324,21 @@ func (sr *SegmentReader) LastIndex() uint64 {
 	return sr.s.Index + uint64(len(sr.pos)) - 1
 }
 
-// func (sr *SegmentReader) Close() {
-// 	if sr.f != nil {
-// 		sr.f.Close()
-// 	}
-// }
-
-type SegmenterProcessor struct {
+type SegmentProcessor struct {
 	buf     *buffer      //缓存
 	f       file.WalFile //对应的文件句柄
 	s       *Segment     //对应的段信息
 	crc32er *crc32er
 }
 
-func newSegmentProcessor(s *Segment) *SegmenterProcessor {
-	return &SegmenterProcessor{
+func newSegmentProcessor(s *Segment) *SegmentProcessor {
+	return &SegmentProcessor{
 		s:       s,
 		crc32er: newCrc32er(checkSumPoly),
 	}
 }
 
-func (sp *SegmenterProcessor) open(ft FileType, truncateSize int64) error {
+func (sp *SegmentProcessor) open(ft FileType, truncateSize int64) error {
 	var (
 		f   file.WalFile
 		err error
@@ -365,7 +358,7 @@ func (sp *SegmenterProcessor) open(ft FileType, truncateSize int64) error {
 	return nil
 }
 
-func (sp *SegmenterProcessor) readToBuffer() error {
+func (sp *SegmentProcessor) readToBuffer() error {
 	sp.buf = NewBuffer(int(sp.s.Size))
 	err := sp.buf.FillFrom(sp.f)
 	if err != nil {
@@ -374,7 +367,7 @@ func (sp *SegmenterProcessor) readToBuffer() error {
 	return nil
 }
 
-func (sp *SegmenterProcessor) traverseLogEntries(call func(*posEntry) bool) {
+func (sp *SegmentProcessor) traverseLogEntries(call func(*posEntry) bool) {
 	size := sp.buf.Size()
 	pos := 0
 	for pos < size {
@@ -389,7 +382,7 @@ func (sp *SegmenterProcessor) traverseLogEntries(call func(*posEntry) bool) {
 	}
 }
 
-func (sp *SegmenterProcessor) writeLog(t int8, data []byte) int {
+func (sp *SegmentProcessor) writeLog(t int8, data []byte) int {
 	l := len(data) + crc32Size + typeSize
 	totalLen := l + lenSize
 	off, _ := sp.buf.Seek(0)
@@ -404,7 +397,7 @@ func (sp *SegmenterProcessor) writeLog(t int8, data []byte) int {
 	return totalLen
 }
 
-func (sp *SegmenterProcessor) readLog(pos int) (_ *LogEntry, ok bool) {
+func (sp *SegmentProcessor) readLog(pos int) (_ *LogEntry, ok bool) {
 	lbz := sp.buf.ReadAt(pos, lenSize)
 	if lbz == nil {
 		return
@@ -423,45 +416,26 @@ func (sp *SegmenterProcessor) readLog(pos int) (_ *LogEntry, ok bool) {
 	}, true
 }
 
-// func (sp *SegmenterProcessor) readLog(pos int) *LogEntry {
-// 	lbz := sp.buf.ReadAt(pos, lenSize)
-// 	if lbz == nil {
-// 		return nil
-// 	}
-// 	l := int(sp.deserializeUint32(lbz))
-// 	data := sp.buf.ReadAt(pos+lenSize, l)
-// 	if len(data) == 0 {
-// 		return nil
-// 	}
-// 	c := sp.deserializeUint32(data)
-// 	return &LogEntry{
-// 		Len:   l,
-// 		Crc32: c,
-// 		Typ:   int8(data[crc32Size]),
-// 		Data:  data[crc32Size+typeSize:],
-// 	}
-// }
-
-func (sp *SegmenterProcessor) crc32Check(crc32 uint32, data []byte) bool {
+func (sp *SegmentProcessor) crc32Check(crc32 uint32, data []byte) bool {
 	return sp.crc32er.Checksum(data) == crc32
 }
 
-func (sp *SegmenterProcessor) Close() error {
+func (sp *SegmentProcessor) Close() error {
 	if sp.f != nil {
 		return sp.f.Close()
 	}
 	return nil
 }
 
-func (sp *SegmenterProcessor) serializateUint32(b []byte, v uint32) {
+func (sp *SegmentProcessor) serializateUint32(b []byte, v uint32) {
 	binary.BigEndian.PutUint32(b, v)
 }
 
-func (sp *SegmenterProcessor) deserializeUint32(b []byte) uint32 {
+func (sp *SegmentProcessor) deserializeUint32(b []byte) uint32 {
 	return binary.BigEndian.Uint32(b)
 }
 
-func (sp *SegmenterProcessor) Truncate(n int) error {
+func (sp *SegmentProcessor) Truncate(n int) error {
 	err := sp.buf.Truncate(n)
 	if err != nil {
 		return err

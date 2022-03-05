@@ -15,7 +15,7 @@ import (
 
 var (
 	OsPageSize     = os.Getpagesize()
-	OsPageSizeMask = OsPageSize - 1
+	OsPageSizeMask = ^(OsPageSize - 1)
 )
 
 type MmapFile struct {
@@ -64,10 +64,10 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
 }
 
 func mmap(fd int, offset int64, size int) (_ mmapInfo, err error) {
-	if size&OsPageSizeMask != 0 {
-		size = (size + OsPageSize) & OsPageSize
+	if size&^OsPageSizeMask != 0 {
+		size = (size + OsPageSize) & OsPageSizeMask
 	}
-	offset = offset & int64(OsPageSize)
+	offset = offset & int64(OsPageSizeMask)
 
 	var (
 		data []byte
@@ -129,14 +129,15 @@ func (mf *MmapFile) Write(data []byte) (int, error) {
 	}
 
 	for len(data) > writeN {
-		if mf.offset >= mmEnd || mf.mmArea == nil {
+		if mf.offset < mf.mmOff || mf.offset >= mmEnd || mf.mmArea == nil {
 			if err := mf.remap(mf.offset); err != nil {
 				return 0, syscall.EAGAIN
 			}
 			mmEnd = mf.mmOff + int64(mf.mmSize)
 		}
-		writeN += copy(mf.mmArea[mf.offset-mf.mmOff:], data[writeN:])
-		mf.offset += int64(writeN)
+		n := copy(mf.mmArea[mf.offset-mf.mmOff:], data[writeN:])
+		mf.offset += int64(n)
+		writeN += n
 		if mf.offset > mf.fSize {
 			mf.fSize = mf.offset
 		}
@@ -159,14 +160,15 @@ func (mf *MmapFile) Read(data []byte) (int, error) {
 	)
 
 	for mf.offset < mf.fSize && readN < cap(data) {
-		if mf.offset >= mmEnd {
+		if mf.offset < mf.mmOff || mf.offset >= mmEnd || mf.mmArea == nil {
 			if err := mf.remap(mf.offset); err != nil {
 				return readN, syscall.EAGAIN
 			}
 			mmEnd = mf.mmOff + int64(mf.mmSize)
 		}
-		readN += copy(data[readN:], mf.mmArea[mf.offset-mf.mmOff:])
-		mf.offset += int64(readN)
+		n := copy(data[readN:], mf.mmArea[mf.offset-mf.mmOff:])
+		mf.offset += int64(n)
+		readN += n
 	}
 
 	if int64(readN) > readAll {

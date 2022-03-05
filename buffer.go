@@ -133,7 +133,6 @@ func (b *buffer) Truncate(n int) error {
 func (b *buffer) Reset() {
 	b.buf = b.buf[:0]
 	b.off = 0
-	// b.flushPoint = 0
 }
 
 func (b *buffer) WriteTo(wr io.Writer) (int, error) {
@@ -144,14 +143,6 @@ func (b *buffer) WriteTo(wr io.Writer) (int, error) {
 	b.woff += n
 	return n, err
 }
-
-// func (b *buffer) FlushTo(wfr WriteFlusher) (int, error) {
-// 	n, err := b.WriteTo(wfr)
-// 	if err != nil {
-// 		return n, err
-// 	}
-// 	return n, wfr.Flush()
-// }
 
 func (b *buffer) shouldGrow(n int) int {
 	return n - b.Remain()

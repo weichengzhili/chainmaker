@@ -44,7 +44,6 @@ const (
 )
 
 type Lws struct {
-	mu               sync.Mutex
 	path             string //base path of log files
 	opts             Options
 	sw               *SegmentWriter //lws writes log data through it
@@ -221,13 +220,12 @@ func (l *Lws) parseSegmentName(name string) (id uint64, index uint64, err error)
  @param {interface{}} obj  数据
  @return {error} 成功返回nil，错误返回错误详情
 */
+//写锁在SegmentWriter中
 func (l *Lws) Write(typ int8, obj interface{}) error {
 	t, data, err := l.encodeObj(typ, obj)
 	if err != nil {
 		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	var (
 		writeNotice writeNoticeType
 	)

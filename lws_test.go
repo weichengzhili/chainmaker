@@ -148,7 +148,7 @@ func TestLws_WriteReadObj(t *testing.T) {
 // )
 
 // func init() {
-// 	l, err := Open("./lws", WithSegmentSize(1<<26), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0))
+// 	l, err := Open("./lws", WithSegmentSize(1<<10), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0))
 // 	if err != nil {
 // 		panic(err)
 // 	}

@@ -191,10 +191,10 @@ func (sw *SegmentWriter) Write(t int8, data []byte) (int, error) {
 	}
 	sw.writeLocker.Unlock()
 	err := sw.tryFlush()
-	if err != nil {
-		return 0, nil
-	}
-	return l, nil
+	// if err != nil {
+	// 	return 0, nil
+	// }
+	return l, err
 }
 
 //直接写不经过缓存

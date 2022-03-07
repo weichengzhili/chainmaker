@@ -44,6 +44,7 @@ const (
 )
 
 type Lws struct {
+	mu               sync.Mutex
 	path             string //base path of log files
 	opts             Options
 	sw               *SegmentWriter //lws writes log data through it
@@ -229,6 +230,8 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	var (
 		writeNotice writeNoticeType
 	)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.sw.Size() > l.opts.SegmentSize {
 		writeNotice |= newFile
 		if err = l.rollover(); err != nil {

@@ -148,7 +148,7 @@ func TestLws_WriteReadObj(t *testing.T) {
 // )
 
 // func init() {
-// 	l, err := Open("./lws", WithSegmentSize(1<<10), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0))
+// 	l, err := Open("./lws", WithSegmentSize(1<<26), WithFilePrex("test_"), WithWriteFlag(WF_SYNCWRITE, 0))
 // 	if err != nil {
 // 		panic(err)
 // 	}
@@ -156,7 +156,7 @@ func TestLws_WriteReadObj(t *testing.T) {
 // 	benchWal, err = wal.Open("./wal", &wal.Options{
 // 		SegmentSize: 1 << 26,
 // 		LogFormat:   wal.JSON,
-// 		NoSync:      false,
+// 		NoSync:      true,
 // 	})
 // }
 
@@ -170,14 +170,6 @@ func TestLws_WriteReadObj(t *testing.T) {
 // }
 
 // func BenchmarkWal_Write(b *testing.B) {
-// 	//l, err := wal.Open("./wal", &wal.Options{
-// 	//	SegmentSize: 1 << 26,
-// 	//	LogFormat:   wal.JSON,
-// 	//	NoSync:      false,
-// 	//})
-// 	//if err != nil {
-// 	//	panic(err)
-// 	//}
 // 	l := benchWal
 // 	last, _ := l.LastIndex()
 // 	data := []byte("hello world")
@@ -187,35 +179,3 @@ func TestLws_WriteReadObj(t *testing.T) {
 // 	}
 // 	l.Sync()
 // }
-
-//func BenchmarkReadLws(b *testing.B) {
-//	l, err := Open("./lws", WithSegmentSize(1<<26), WithFilePrex("test_"))
-//	if err != nil {
-//		panic(err)
-//	}
-//	for i := 0; i < b.N; i++ {
-//		it := l.NewLogIterator()
-//		for it.HasNext() {
-//			it.Next().Get()
-//		}
-//	}
-//}
-//
-//func BenchmarkReadWal(b *testing.B) {
-//	l, err := wal.Open("./wal", &wal.Options{
-//		SegmentSize: 1 << 26,
-//		LogFormat:   wal.JSON,
-//		NoSync:      true,
-//	})
-//	if err != nil {
-//		panic(err)
-//	}
-//
-//	last, _ := l.LastIndex()
-//	first, _ := l.FirstIndex()
-//	for i := 0; i < b.N; i++ {
-//		for i := first; i <= last; i++ {
-//			l.Read(i)
-//		}
-//	}
-//}

@@ -8,6 +8,7 @@ type EntryContainer interface {
 	FirstIndex() uint64
 	LastIndex() uint64
 	GetLogEntry(idx uint64) (*LogEntry, error)
+	ReaderRelease()
 }
 
 type walContainer struct {
@@ -34,12 +35,19 @@ func (wc *walContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	return sr.ReadLogByIndex(idx)
 }
 
+func (wc *walContainer) ReaderRelease() {
+	wc.wal.readRelease()
+}
+
 type fileContainer struct {
 	*SegmentReader
 }
 
 func (fc *fileContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	return fc.ReadLogByIndex(idx)
+}
+
+func (fc *fileContainer) ReaderRelease() {
 }
 
 type EntryIterator struct {
@@ -75,10 +83,6 @@ func (it *EntryIterator) Next() *EntryElemnet {
 	return it.element()
 }
 
-// func (it *EntryIterator) Element() *EntryElemnet {
-// 	return it.element()
-// }
-
 func (it *EntryIterator) element() *EntryElemnet {
 	return &EntryElemnet{
 		index:     it.index,
@@ -94,7 +98,7 @@ func (it *EntryIterator) Previous() *EntryElemnet {
 	return it.element()
 }
 func (it *EntryIterator) Release() {
-	// it.container.wal.readRelease()
+	it.container.ReaderRelease()
 }
 
 func (ele *EntryElemnet) get() (*LogEntry, error) {

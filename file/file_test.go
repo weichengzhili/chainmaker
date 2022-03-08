@@ -50,16 +50,41 @@ func TestMmapRead(t *testing.T) {
 	require.Nil(t, err)
 }
 
-func TestFileWrite(t *testing.T) {
-	fileSize := 1 << 12
-	f, err := NewFile("./test_mmap2.wal")
-	require.Nil(t, err)
-	err = f.Truncate(int64(fileSize))
+func TestMmapWriteAt(t *testing.T) {
+	map_size := 1 << 16
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
 	require.Nil(t, err)
 	data := []byte("hello world@@")
-	for i := 0; i < fileSize/len(data); i++ {
-		f.Write(data)
-	}
+	_, err = f.WriteAt(data, 0)
+	require.Nil(t, err)
+	f.Sync()
+	f.Close()
+}
+
+func TestMmapReadAt(t *testing.T) {
+	map_size := 1 << 16
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
+	require.Nil(t, err)
+	data := make([]byte, 10)
+	_, err = f.ReadAt(data, 2)
+	require.Nil(t, err)
+	t.Log(string(data))
+	err = f.Close()
+	require.Nil(t, err)
+}
+
+func TestFileWrite(t *testing.T) {
+	// fileSize := 1 << 12
+	f, err := NewFile("./test_mmap2.wal")
+	require.Nil(t, err)
+	// err = f.Truncate(int64(fileSize))
+	require.Nil(t, err)
+	data := []byte("hello world@@")
+	// for i := 0; i < fileSize/len(data); i++ {
+	// 	f.Write(data)
+	// }
+	_, err = f.WriteAt(data, -1)
+	require.Nil(t, err)
 	f.Sync()
 	f.Close()
 }
@@ -86,4 +111,13 @@ func TestFileRead(t *testing.T) {
 	}
 	err = f.Close()
 	require.Nil(t, err)
+}
+
+func TestReadAt(t *testing.T) {
+	f, err := NewFile("./test_mmap2.wal")
+	require.Nil(t, err)
+	data := make([]byte, 1<<12)
+	_, err = f.ReadAt(data, -1)
+	require.Nil(t, err)
+	f.Close()
 }

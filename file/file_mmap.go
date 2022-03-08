@@ -14,10 +14,13 @@ import (
 )
 
 var (
-	OsPageSize     = os.Getpagesize()
-	OsPageSizeMask = ^(OsPageSize - 1)
+	OsPageSize        = os.Getpagesize()
+	OsPageSizeMask    = ^(OsPageSize - 1)
+	strNegativeOffset = "negative offset"
+	strSeekOffInvaild = "seek offset invaild"
 )
 
+//concurrent operations are unsafe
 type MmapFile struct {
 	f      *os.File //映射的文件
 	fSize  int64    //文件大小
@@ -96,7 +99,7 @@ func (mf *MmapFile) Seek(offset int64, whence int) (ret int64, err error) {
 		offset += mf.fSize
 	}
 	if offset < 0 {
-		return 0, errors.New("seek offset invaild")
+		return 0, errors.New(strSeekOffInvaild)
 	}
 	mf.offset = offset
 	return mf.offset, nil
@@ -119,11 +122,23 @@ func (mf *MmapFile) remap(offset int64) error {
 	return err
 }
 
-func (mf *MmapFile) Write(data []byte) (int, error) {
+//concurrent operations are unsafe
+func (mf *MmapFile) WriteAt(data []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, errors.New(strNegativeOffset)
+	}
+	return mf.writeAt(data, offset)
+}
+
+func (mf *MmapFile) shouldRemap(offset, end int64) bool {
+	return offset < mf.mmOff || offset >= end || mf.mmArea == nil
+}
+
+func (mf *MmapFile) writeAt(data []byte, offset int64) (int, error) {
 	var (
 		writeN   int
 		mmEnd    = mf.mmOff + int64(mf.mmSize)
-		writeEnd = mf.offset + int64(len(data))
+		writeEnd = offset + int64(len(data))
 	)
 	if writeEnd > mf.fSize {
 		if err := syscall.Ftruncate(int(mf.f.Fd()), writeEnd); err != nil {
@@ -133,20 +148,24 @@ func (mf *MmapFile) Write(data []byte) (int, error) {
 	}
 
 	for len(data) > writeN {
-		if mf.offset < mf.mmOff || mf.offset >= mmEnd || mf.mmArea == nil {
-			if err := mf.remap(mf.offset); err != nil {
-				return 0, syscall.EAGAIN
+		if mf.shouldRemap(offset, mmEnd) {
+			if err := mf.remap(offset); err != nil {
+				return writeN, syscall.EAGAIN
 			}
 			mmEnd = mf.mmOff + int64(mf.mmSize)
 		}
-		n := copy(mf.mmArea[mf.offset-mf.mmOff:], data[writeN:])
-		mf.offset += int64(n)
+		n := copy(mf.mmArea[offset-mf.mmOff:], data[writeN:])
+		offset += int64(n)
 		writeN += n
-		if mf.offset > mf.fSize {
-			mf.fSize = mf.offset
-		}
 	}
 	return writeN, nil
+}
+
+//concurrent operations are unsafe
+func (mf *MmapFile) Write(data []byte) (int, error) {
+	writeN, err := mf.writeAt(data, mf.offset)
+	mf.offset += int64(writeN)
+	return writeN, err
 }
 
 func (mf *MmapFile) Sync() error {
@@ -156,37 +175,52 @@ func (mf *MmapFile) Sync() error {
 	return nil
 }
 
-func (mf *MmapFile) Read(data []byte) (int, error) {
+//concurrent operations are unsafe
+func (mf *MmapFile) ReadAt(data []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, errors.New(strNegativeOffset)
+	}
+	if offset >= mf.fSize {
+		return 0, io.EOF
+	}
+	return mf.readAt(data, offset)
+}
+
+func (mf *MmapFile) readAt(data []byte, offset int64) (int, error) {
 	var (
 		readN   int
 		mmEnd   = mf.mmOff + int64(mf.mmSize)
-		readAll = mf.fSize - mf.offset
+		readAll = mf.fSize - offset
 	)
 	if int64(len(data)) > readAll {
 		data = data[:readAll]
 	}
 
-	for mf.offset < mf.fSize && readN < cap(data) {
-		if mf.offset < mf.mmOff || mf.offset >= mmEnd || mf.mmArea == nil {
-			if err := mf.remap(mf.offset); err != nil {
+	for offset < mf.fSize && readN < cap(data) {
+		if mf.shouldRemap(offset, mmEnd) {
+			if err := mf.remap(offset); err != nil {
 				return readN, syscall.EAGAIN
 			}
 			mmEnd = mf.mmOff + int64(mf.mmSize)
 		}
-		n := copy(data[readN:], mf.mmArea[mf.offset-mf.mmOff:])
-		mf.offset += int64(n)
+		n := copy(data[readN:], mf.mmArea[offset-mf.mmOff:])
+		offset += int64(n)
 		readN += n
 	}
 
-	if int64(readN) > readAll {
+	if int64(readN) >= readAll {
 		readN = int(readAll)
-	}
-
-	if mf.offset >= mf.fSize {
-		mf.offset = mf.fSize
 		return readN, io.EOF
 	}
+
 	return readN, nil
+}
+
+//concurrent operations are unsafe
+func (mf *MmapFile) Read(data []byte) (int, error) {
+	readN, err := mf.readAt(data, mf.offset)
+	mf.offset += int64(readN)
+	return readN, err
 }
 
 func (mf *MmapFile) Close() error {

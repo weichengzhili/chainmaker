@@ -8,6 +8,8 @@ package file
 type WalFile interface {
 	Write([]byte) (int, error)
 	Read([]byte) (int, error)
+	WriteAt(data []byte, offset int64) (int, error)
+	ReadAt(data []byte, offset int64) (int, error)
 	Size() int64
 	Close() error
 	Seek(offset int64, whence int) (ret int64, err error)

@@ -31,7 +31,7 @@ type mmapInfo struct {
 	mmArea []byte //映射的区域
 }
 
-func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
+func NewMmapFile(path string, mmSize int) (*MmapFile, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
@@ -46,14 +46,6 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
 		return nil, err
 	}
 	fSize := finfo.Size()
-	if fSize < fileSize {
-		err = syscall.Ftruncate(int(f.Fd()), fileSize)
-		if err != nil {
-			return nil, err
-		}
-		fSize = fileSize
-	}
-
 	mmi, err := mmap(int(f.Fd()), 0, mmSize)
 
 	return &MmapFile{
@@ -61,6 +53,18 @@ func NewMmapFile(path string, mmSize int, fileSize int64) (*MmapFile, error) {
 		fSize:    fSize,
 		mmapInfo: mmi,
 	}, nil
+}
+
+func (mf *MmapFile) Truncate(size int64) error {
+	err := mf.f.Truncate(size)
+	if err != nil {
+		return err
+	}
+	mf.fSize = size
+	if mf.offset > size {
+		mf.offset = size
+	}
+	return nil
 }
 
 func mmap(fd int, offset int64, size int) (_ mmapInfo, err error) {
@@ -145,7 +149,7 @@ func (mf *MmapFile) Write(data []byte) (int, error) {
 	return writeN, nil
 }
 
-func (mf *MmapFile) Flush() error {
+func (mf *MmapFile) Sync() error {
 	if mf.mmArea != nil {
 		return unix.Msync(mf.mmArea, unix.MS_SYNC)
 	}

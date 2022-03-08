@@ -212,7 +212,7 @@ func (sw *SegmentWriter) directWrite(t int8, data []byte) (int, error) {
 	if err != nil {
 		return n1 + n2, err
 	}
-	return n1 + n2, sw.f.Flush()
+	return n1 + n2, sw.f.Sync()
 }
 
 func (sw *SegmentWriter) writeToBuffer(t int8, data []byte) int {
@@ -245,7 +245,7 @@ func (sw *SegmentWriter) Flush() error {
 			return err
 		}
 	}
-	err := sw.f.Flush()
+	err := sw.f.Sync()
 	if err == nil {
 		sw.acc = 0
 	}
@@ -345,15 +345,19 @@ func (sp *SegmentProcessor) open(ft FileType, truncateSize int64) error {
 	)
 	switch ft {
 	case FT_NORMAL:
-		f, err = file.NewFile(sp.s.Path, truncateSize)
+		f, err = file.NewFile(sp.s.Path)
 	case FT_MMAP:
-		f, err = file.NewMmapFile(sp.s.Path, file_mmap_size, truncateSize)
+		f, err = file.NewMmapFile(sp.s.Path, file_mmap_size)
 	default:
 		err = ErrFileTypeNotSupport
 	}
 	if err != nil {
 		return err
 	}
+	if err = f.Truncate(truncateSize); err != nil {
+		return err
+	}
+
 	sp.f = f
 	return nil
 }

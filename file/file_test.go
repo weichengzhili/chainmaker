@@ -14,20 +14,23 @@ import (
 func TestMmapWrite(t *testing.T) {
 	fileSize := 1 << 12
 	map_size := 1 << 16
-	f, err := NewMmapFile("./test_mmap.wal", map_size, int64(fileSize))
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
+	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
 	data := []byte("hello world@@")
 	for i := 0; i < map_size/len(data); i++ {
 		f.Write(data)
 	}
-	f.Flush()
+	f.Sync()
 	f.Close()
 }
 
 func TestMmapRead(t *testing.T) {
 	fileSize := 1 << 12
 	map_size := 1 << 16
-	f, err := NewMmapFile("./test_mmap.wal", map_size, int64(fileSize))
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
+	require.Nil(t, err)
+	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
 	data := make([]byte, 1<<12)
 	for {
@@ -49,19 +52,23 @@ func TestMmapRead(t *testing.T) {
 
 func TestFileWrite(t *testing.T) {
 	fileSize := 1 << 12
-	f, err := NewFile("./test_mmap2.wal", int64(fileSize))
+	f, err := NewFile("./test_mmap2.wal")
+	require.Nil(t, err)
+	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
 	data := []byte("hello world@@")
 	for i := 0; i < fileSize/len(data); i++ {
 		f.Write(data)
 	}
-	f.Flush()
+	f.Sync()
 	f.Close()
 }
 
 func TestFileRead(t *testing.T) {
 	fileSize := 1 << 12
-	f, err := NewFile("./test_mmap2.wal", int64(fileSize))
+	f, err := NewFile("./test_mmap2.wal")
+	require.Nil(t, err)
+	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
 	data := make([]byte, 1<<12)
 	for {

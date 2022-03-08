@@ -105,18 +105,27 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 		return nil, err
 	}
 	if err := sw.readAndCheck(); err != nil {
+		sw.Close()
 		return nil, err
 	}
+
+	if sw.f.Size() < int64(sw.segmentSize) {
+		if err := sw.f.Truncate(int64(sw.segmentSize)); err != nil {
+			sw.Close()
+			return nil, err
+		}
+	}
+
 	sw.startFlushWorker()
 	return sw, nil
 }
 
 func (sw *SegmentWriter) open() error {
-	return sw.SegmentProcessor.open(sw.ft, int64(sw.segmentSize))
+	return sw.SegmentProcessor.open(sw.ft)
 }
 
 func (sw *SegmentWriter) readAndCheck() (err error) {
-	if err = sw.readToBuffer(); err != nil {
+	if err = sw.readToBuffer(int(sw.segmentSize)); err != nil {
 		return
 	}
 
@@ -270,7 +279,7 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 		err error
 	)
 
-	if err = sr.open(ft, 0); err != nil {
+	if err = sr.open(ft); err != nil {
 		return nil, err
 	}
 
@@ -282,7 +291,7 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 }
 
 func (sr *SegmentReader) loadEntries() error {
-	if err := sr.readToBuffer(); err != nil {
+	if err := sr.readToBuffer(int(sr.s.Size)); err != nil {
 		return err
 	}
 	call := func(ue *posEntry) bool {
@@ -299,7 +308,7 @@ func (sr *SegmentReader) loadEntries() error {
 
 func (sr *SegmentReader) ReadLogByIndex(index uint64) (*LogEntry, error) {
 	pos := int(index - sr.s.Index)
-	if pos < 0 || pos > len(sr.pos) {
+	if pos < 0 || pos >= len(sr.pos) {
 		return nil, ErrSegmentIndex
 	}
 	return sr.readOneEntryFrom(sr.pos[pos], false), nil
@@ -338,7 +347,7 @@ func newSegmentProcessor(s *Segment) *SegmentProcessor {
 	}
 }
 
-func (sp *SegmentProcessor) open(ft FileType, truncateSize int64) error {
+func (sp *SegmentProcessor) open(ft FileType) error {
 	var (
 		f   file.WalFile
 		err error
@@ -354,16 +363,14 @@ func (sp *SegmentProcessor) open(ft FileType, truncateSize int64) error {
 	if err != nil {
 		return err
 	}
-	if err = f.Truncate(truncateSize); err != nil {
-		return err
-	}
 
 	sp.f = f
 	return nil
 }
 
-func (sp *SegmentProcessor) readToBuffer() error {
-	sp.buf = NewBuffer(int(sp.s.Size))
+func (sp *SegmentProcessor) readToBuffer(bufSize int) error {
+	// sp.buf = NewBuffer(int(sp.s.Size))
+	sp.buf = NewBuffer(bufSize)
 	err := sp.buf.FillFrom(sp.f)
 	if err != nil {
 		return err

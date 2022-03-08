@@ -22,14 +22,14 @@ func TestLws_Write(t *testing.T) {
 	data := []byte("hello world")
 	err = l.Write(0, data)
 	require.Nil(t, err)
-	time.Sleep(time.Second * 5)
+	// time.Sleep(time.Second * 5)
 	l.Flush()
 	l.Close()
 	require.Nil(t, err)
 }
 
 func TestLws_Read(t *testing.T) {
-	l, err := Open("./lws", WithSegmentSize(30), WithFilePrex("test_"))
+	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"))
 	require.Nil(t, err)
 	it := l.NewLogIterator()
 	for it.HasNext() {
@@ -40,7 +40,6 @@ func TestLws_Read(t *testing.T) {
 			t.Log(string(data))
 		}
 	}
-	time.Sleep(time.Minute)
 	l.Close()
 }
 

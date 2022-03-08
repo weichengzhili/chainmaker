@@ -162,6 +162,9 @@ func (mf *MmapFile) Read(data []byte) (int, error) {
 		mmEnd   = mf.mmOff + int64(mf.mmSize)
 		readAll = mf.fSize - mf.offset
 	)
+	if int64(len(data)) > readAll {
+		data = data[:readAll]
+	}
 
 	for mf.offset < mf.fSize && readN < cap(data) {
 		if mf.offset < mf.mmOff || mf.offset >= mmEnd || mf.mmArea == nil {

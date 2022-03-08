@@ -79,7 +79,7 @@ type SegmentWriter struct {
 	wf          WriteFlag //刷盘策略
 	threshold   int
 	acc         int //等待刷盘的累计值
-	segmentSize uint64
+	segmentSize int
 	count       int //写入条目的数量
 	closeCh     chan struct{}
 	writeLocker sync.Mutex //非同步写情况下，可能会导致并发写相同数据
@@ -94,12 +94,15 @@ type WriterOptions struct {
 
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
-		SegmentProcessor: newSegmentProcessor(s),
-		ft:               opt.Ft,
-		wf:               opt.Wf,
-		segmentSize:      opt.SegmentSize,
-		threshold:        opt.Fv,
-		closeCh:          make(chan struct{}),
+		SegmentProcessor: newSegmentProcessor(segmentQuota{
+			Segment:     s,
+			segmentSize: int(opt.SegmentSize),
+		}),
+		ft:          opt.Ft,
+		wf:          opt.Wf,
+		segmentSize: int(opt.SegmentSize),
+		threshold:   opt.Fv,
+		closeCh:     make(chan struct{}),
 	}
 	if err := sw.open(); err != nil {
 		return nil, err
@@ -125,7 +128,11 @@ func (sw *SegmentWriter) open() error {
 }
 
 func (sw *SegmentWriter) readAndCheck() (err error) {
-	if err = sw.readToBuffer(int(sw.segmentSize)); err != nil {
+	cap := sw.segmentSize
+	if int(sw.s.Size) > cap {
+		cap = int(sw.s.Size)
+	}
+	if err = sw.readToBuffer(cap); err != nil {
 		return
 	}
 
@@ -178,7 +185,10 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 		return err
 	}
 	old := sw.s
-	sw.s = s
+	sw.s = segmentQuota{
+		Segment:     s,
+		segmentSize: old.segmentSize,
+	}
 	if err := sw.open(); err != nil {
 		sw.s = old
 		return err
@@ -274,7 +284,10 @@ type SegmentReader struct {
 func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 	var (
 		sr = &SegmentReader{
-			SegmentProcessor: newSegmentProcessor(s),
+			SegmentProcessor: newSegmentProcessor(segmentQuota{
+				Segment:     s,
+				segmentSize: 0,
+			}),
 		}
 		err error
 	)
@@ -336,11 +349,16 @@ func (sr *SegmentReader) LastIndex() uint64 {
 type SegmentProcessor struct {
 	buf     *buffer      //缓存
 	f       file.WalFile //对应的文件句柄
-	s       *Segment     //对应的段信息
+	s       segmentQuota //对应的段信息
 	crc32er *crc32er
 }
 
-func newSegmentProcessor(s *Segment) *SegmentProcessor {
+type segmentQuota struct {
+	*Segment
+	segmentSize int
+}
+
+func newSegmentProcessor(s segmentQuota) *SegmentProcessor {
 	return &SegmentProcessor{
 		s:       s,
 		crc32er: newCrc32er(checkSumPoly),
@@ -356,7 +374,11 @@ func (sp *SegmentProcessor) open(ft FileType) error {
 	case FT_NORMAL:
 		f, err = file.NewFile(sp.s.Path)
 	case FT_MMAP:
-		f, err = file.NewMmapFile(sp.s.Path, file_mmap_size)
+		mmap_size := file_mmap_size
+		if mmap_size > sp.s.segmentSize {
+			mmap_size = sp.s.segmentSize
+		}
+		f, err = file.NewMmapFile(sp.s.Path, mmap_size)
 	default:
 		err = ErrFileTypeNotSupport
 	}

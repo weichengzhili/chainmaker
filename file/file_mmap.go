@@ -9,8 +9,6 @@ import (
 	"io"
 	"os"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -169,9 +167,13 @@ func (mf *MmapFile) Write(data []byte) (int, error) {
 }
 
 func (mf *MmapFile) Sync() error {
-	if mf.mmArea != nil {
-		return unix.Msync(mf.mmArea, unix.MS_SYNC)
+	if mf.mmArea == nil {
+		return nil
 	}
+	if err := syscall.Munmap(mf.mmArea); err != nil {
+		return err
+	}
+	mf.mmArea = nil
 	return nil
 }
 

@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -36,11 +35,11 @@ var (
 	InitIndex = 1
 )
 
-type PurgeMod int
+type purgeMod int
 
 const (
-	PurgeModAsync PurgeMod = 0
-	PurgeModSync  PurgeMod = 1
+	purgeModSync  purgeMod = 0
+	purgeModAsync purgeMod = 1
 )
 
 type Lws struct {
@@ -50,13 +49,11 @@ type Lws struct {
 	sw               *SegmentWriter //lws writes log data through it
 	currentSegmentID uint64         //the id of latest segment
 	firstIndex       uint64
-	lastIndex        uint64 //the index for next log entry
-	segmentRW        sync.RWMutex
-	segments         []*Segment  //segment meata info
+	lastIndex        uint64 //the last index of log entry has been writen
+	segments         rwlockSegmentGroup
 	readCache        ReaderCache //cache data wait to be readed
 	cond             *sync.Cond
 	readCount        int                  //record the count of reading the wal file
-	purging          int32                //mark pure worker is doing
 	writeNoticeCh    chan writeNoticeType //notice purge go routine that a new log/a new file has been writed
 	closeCh          chan struct{}
 }
@@ -101,28 +98,29 @@ func (l *Lws) open(opt ...Opt) error {
 	if err = l.buildSegments(); err != nil {
 		return err
 	}
-	if len(l.segments) == 0 {
+	if l.segments.Len() == 0 {
 		l.currentSegmentID = 1
-		l.lastIndex = 1
-		l.segments = append(l.segments, &Segment{
+		l.lastIndex = 0
+		l.segments.Append(&Segment{
 			ID:    uint64(InitID),
 			Index: uint64(InitIndex),
-			Path:  filepath.Join(l.path, l.segmentName()),
+			Path:  filepath.Join(l.path, l.segmentName(1, 1)),
 		})
 	}
-	currentSegment := l.segments[len(l.segments)-1]
+	currentSegment := l.segments.Last()
 	l.currentSegmentID = currentSegment.ID
 	l.sw, err = NewSegmentWriter(currentSegment, WriterOptions{
 		SegmentSize: l.opts.SegmentSize,
 		Ft:          l.opts.Ft,
 		Wf:          l.opts.Wf,
 		Fv:          l.opts.FlushQuota,
+		MapLock:     l.opts.MmapFileLock,
 	})
 	if err != nil {
 		return err
 	}
-	l.lastIndex = currentSegment.Index + uint64(l.sw.EntryCount())
-	l.firstIndex = l.segments[0].Index
+	l.lastIndex = currentSegment.Index + uint64(l.sw.EntryCount()) - 1
+	l.firstIndex = l.segments.First().Index
 
 	return nil
 }
@@ -137,21 +135,19 @@ func (l *Lws) buildSegments() error {
 		return err
 	}
 	sort.Strings(names)
-	l.segmentRW.Lock()
-	defer l.segmentRW.Unlock()
-	l.segments = make([]*Segment, len(names))
+	l.segments.Resize(len(names))
 	for i, name := range names {
 		fullPath := path.Join(l.path, name)
 		id, index, err := l.parseSegmentName(name)
 		if err != nil {
 			return err
 		}
-		l.segments[i] = &Segment{
+		l.segments.Assign(i, &Segment{
 			ID:    id,
 			Index: index,
 			Path:  fullPath,
 			Size:  l.fileSize(fullPath),
-		}
+		})
 	}
 	return nil
 }
@@ -191,17 +187,17 @@ func (l *Lws) rollover() error {
 	l.currentSegmentID++
 	s := &Segment{
 		ID:    l.currentSegmentID,
-		Index: l.lastIndex,
-		Path:  filepath.Join(l.path, l.segmentName()),
+		Index: l.lastIndex + 1,
+		Path:  filepath.Join(l.path, l.segmentName(l.currentSegmentID, l.lastIndex+1)),
 	}
-	l.segmentRW.Lock()
-	l.segments = append(l.segments, s)
-	l.segmentRW.Unlock()
+	l.segments.Lock()
+	l.segments.Append(s)
+	l.segments.Unlock()
 	return l.sw.Replace(s)
 }
 
-func (l *Lws) segmentName() string {
-	return fmt.Sprintf("%s%05d_%d.%s", l.opts.FilePrefix, l.currentSegmentID, l.lastIndex, l.opts.FileExtension)
+func (l *Lws) segmentName(id, idx uint64) string {
+	return fmt.Sprintf("%s%05d_%d.%s", l.opts.FilePrefix, id, idx, l.opts.FileExtension)
 }
 
 func (l *Lws) parseSegmentName(name string) (id uint64, index uint64, err error) {
@@ -271,13 +267,17 @@ func (l *Lws) encodeObj(t int8, obj interface{}) (int8, []byte, error) {
 */
 func (l *Lws) NewLogIterator() *EntryIterator {
 	l.readRequest()
-	return newEntryIterator(
+	it := newEntryIterator(
 		&walContainer{
 			wal:   l,
 			first: l.firstIndex,
-			last:  l.lastIndex - 1,
+			last:  l.lastIndex,
 		},
 	)
+	// runtime.SetFinalizer(it, func(it *EntryIterator) {
+	// 	it.Release()
+	// })
+	return it
 }
 
 /*
@@ -295,14 +295,64 @@ func (l *Lws) Flush() error {
  @param {PurgeMod} mod:  0异步清理  1:同步清理
  @return {error} 错误信息
 */
-func (l *Lws) Purge(mod PurgeMod) error {
-	switch mod {
-	case PurgeModAsync:
-		go l.purge()
-	case PurgeModSync:
-		return l.purge()
+func (l *Lws) Purge(opt ...PurgeOpt) error {
+	opts := PurgeOptions{}
+	for _, o := range opt {
+		o(&opts)
+	}
+	switch opts.mode {
+	case purgeModAsync:
+		go l.purge(opts.purgeLimit)
+	case purgeModSync:
+		return l.purge(opts.purgeLimit)
 	}
 	return nil
+}
+
+func (l *Lws) purge(limit purgeLimit) error {
+	pworker := newPurgeWorker(limit)
+	pool := segmentWaterPool{
+		rwlockSegmentGroup: &l.segments,
+		lastIndex:          l.lastIndex,
+	}
+	if !pworker.Probe(pool) {
+		return nil
+	}
+	gurder := pworker.Guard()
+	if gurder == nil {
+		return ErrPurgeWorkExisted
+	}
+	defer gurder.Release()
+	l.cond.L.Lock()
+	for l.readCount > 0 {
+		l.cond.Wait()
+	}
+	callBack := func(boundary *Segment) {
+		if boundary != nil {
+			l.firstIndex = boundary.Index
+			l.cond.L.Unlock()
+			l.segments.Lock()
+			defer l.segments.Unlock()
+			var at int
+			l.segments.Traverse(func(i int, s *Segment) bool {
+				if s.ID < boundary.ID {
+					if rd := l.readCache.DeleteReader(s.ID); rd != nil {
+						rd.Close()
+					}
+					return false
+				}
+				at = i - 1
+				return true
+			})
+			if at >= 0 {
+				_, l.segments.SegmentGroup = l.segments.Split(at)
+			}
+		}
+	}
+	return pworker.Purge(segmentWaterPool{
+		rwlockSegmentGroup: &l.segments,
+		lastIndex:          l.lastIndex,
+	}, callBack)
 }
 
 /*
@@ -331,7 +381,7 @@ func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
 	}, WriterOptions{
 		Ft: l.opts.Ft,
 		Wf: WF_SYNCFLUSH,
-	}) //0, l.opts.Ft, FlushStrategySync)
+	})
 	if err != nil {
 		return err
 	}
@@ -340,9 +390,15 @@ func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
 }
 
 func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
+	path := path.Join(l.path, file)
+	finfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
 	sr, err := NewSegmentReader(&Segment{
-		Path:  path.Join(l.path, file),
+		Path:  path,
 		Index: 1,
+		Size:  uint64(finfo.Size()),
 	}, l.opts.Ft)
 	if err != nil {
 		return nil, err
@@ -370,101 +426,9 @@ func (l *Lws) findReaderByIndex(idx uint64) (*refReader, error) {
 }
 
 func (l *Lws) findSegmentByIndex(idx uint64) *Segment {
-	l.segmentRW.RLock()
-	defer l.segmentRW.RUnlock()
-	b, e := 0, len(l.segments)
-	for b < e {
-		m := (e + b) / 2
-		if idx >= l.segments[m].Index {
-			b = m + 1
-		} else {
-			e = m
-		}
-	}
-	return l.segments[b-1]
-}
-
-func (l *Lws) purge() error {
-	if !atomic.CompareAndSwapInt32(&l.purging, 0, 1) {
-		return ErrPurgeWorkExisted
-	}
-	defer atomic.StoreInt32(&l.purging, 0)
-	typ := l.purgeType()
-	if typ == 0 {
-		return nil
-	}
-	var (
-		dirty      []*Segment
-		firstIndex uint64
-	)
-	l.cond.L.Lock()
-	for l.readCount > 0 {
-		l.cond.Wait()
-	}
-
-	switch typ {
-	case 1:
-		dirty, firstIndex = l.pureWithEntryCount()
-	case 2:
-		dirty, firstIndex = l.pureWithFileCount()
-	}
-	if dirty != nil {
-		l.firstIndex = firstIndex
-	}
-	l.cond.L.Unlock()
-	if dirty == nil {
-		return nil
-	}
-	for _, s := range dirty {
-		if rd := l.readCache.DeleteReader(s.ID); rd != nil {
-			rd.Close()
-		}
-		os.Remove(s.Path)
-	}
-	return nil
-}
-
-func (l *Lws) purgeType() int {
-	trigger := l.opts.LogEntryCountLimitForPurge > 0 && l.lastIndex-l.firstIndex > uint64(l.opts.LogEntryCountLimitForPurge)
-	if trigger {
-		return 1
-	}
-	trigger = l.opts.LogFileLimitForPurge > 0 && len(l.segments) > l.opts.LogFileLimitForPurge
-	if trigger {
-		return 2
-	}
-	return 0
-}
-
-func (l *Lws) pureWithEntryCount() (dirty []*Segment, first uint64) {
-	threshold := l.lastIndex - uint64(l.opts.LogEntryCountLimitForPurge)
-	var (
-		i = 0
-	)
-	l.segmentRW.RLock()
-	defer l.segmentRW.RUnlock()
-	for ; i < len(l.segments); i++ {
-		if l.segments[i].Index > threshold {
-			i--
-			break
-		}
-	}
-	if i < 0 {
-		return
-	}
-	first, dirty, l.segments = l.segments[i].Index, l.segments[:i], l.segments[i:]
-	return
-}
-
-func (l *Lws) pureWithFileCount() (dirty []*Segment, first uint64) {
-	l.segmentRW.RLock()
-	defer l.segmentRW.RUnlock()
-	i := len(l.segments) - l.opts.LogFileLimitForPurge
-	if i <= 0 {
-		return
-	}
-	first, dirty, l.segments = l.segments[i].Index, l.segments[:i], l.segments[i:]
-	return
+	l.segments.RLock()
+	defer l.segments.RUnlock()
+	return l.segments.FindAt(idx)
 }
 
 func (l *Lws) readRequest() {
@@ -494,7 +458,7 @@ func (l *Lws) cleanStartUp() {
 		fileCount  int
 		entryCount uint64
 		reassign   = func() {
-			fileCount = len(l.segments)
+			fileCount = l.segments.Len()
 			entryCount = l.lastIndex - l.firstIndex
 		}
 	)
@@ -510,7 +474,10 @@ func (l *Lws) cleanStartUp() {
 			}
 			if (l.opts.LogEntryCountLimitForPurge > 0 && entryCount > uint64(l.opts.LogEntryCountLimitForPurge)) ||
 				(l.opts.LogFileLimitForPurge > 0 && fileCount > l.opts.LogFileLimitForPurge) {
-				l.purge()
+				l.purge(purgeLimit{
+					keepFiles:       l.opts.LogFileLimitForPurge,
+					keepSoftEntries: l.opts.LogEntryCountLimitForPurge,
+				})
 				reassign()
 			}
 		case <-l.closeCh:
@@ -520,7 +487,7 @@ func (l *Lws) cleanStartUp() {
 }
 
 func (l *Lws) Close() {
-	close(l.closeCh)
 	l.sw.Close()
 	l.readCache.CleanReader()
+	close(l.closeCh)
 }

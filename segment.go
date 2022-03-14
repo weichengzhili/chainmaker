@@ -90,6 +90,7 @@ type WriterOptions struct {
 	Ft          FileType
 	Wf          WriteFlag
 	Fv          int
+	MapLock     bool
 }
 
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
@@ -97,6 +98,7 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 		SegmentProcessor: newSegmentProcessor(segmentQuota{
 			Segment:     s,
 			segmentSize: int(opt.SegmentSize),
+			mapLock:     opt.MapLock,
 		}),
 		ft:          opt.Ft,
 		wf:          opt.Wf,
@@ -286,7 +288,7 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 		sr = &SegmentReader{
 			SegmentProcessor: newSegmentProcessor(segmentQuota{
 				Segment:     s,
-				segmentSize: 0,
+				segmentSize: int(s.Size),
 			}),
 		}
 		err error
@@ -300,6 +302,7 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 		sr.Close()
 		return nil, err
 	}
+	sr.closeFile() //读出了内容将file关闭
 	return sr, nil
 }
 
@@ -351,17 +354,20 @@ type SegmentProcessor struct {
 	f       file.WalFile //对应的文件句柄
 	s       segmentQuota //对应的段信息
 	crc32er *crc32er
+	mapLock bool
 }
 
 type segmentQuota struct {
 	*Segment
 	segmentSize int
+	mapLock     bool
 }
 
 func newSegmentProcessor(s segmentQuota) *SegmentProcessor {
 	return &SegmentProcessor{
 		s:       s,
 		crc32er: newCrc32er(checkSumPoly),
+		mapLock: s.mapLock,
 	}
 }
 
@@ -375,10 +381,10 @@ func (sp *SegmentProcessor) open(ft FileType) error {
 		f, err = file.NewFile(sp.s.Path)
 	case FT_MMAP:
 		mmap_size := file_mmap_size
-		if mmap_size > sp.s.segmentSize {
+		if sp.s.segmentSize > 0 && mmap_size > sp.s.segmentSize {
 			mmap_size = sp.s.segmentSize
 		}
-		f, err = file.NewMmapFile(sp.s.Path, mmap_size)
+		f, err = file.NewMmapFile(sp.s.Path, mmap_size, sp.mapLock)
 	default:
 		err = ErrFileTypeNotSupport
 	}
@@ -391,7 +397,6 @@ func (sp *SegmentProcessor) open(ft FileType) error {
 }
 
 func (sp *SegmentProcessor) readToBuffer(bufSize int) error {
-	// sp.buf = NewBuffer(int(sp.s.Size))
 	sp.buf = NewBuffer(bufSize)
 	err := sp.buf.FillFrom(sp.f)
 	if err != nil {
@@ -453,11 +458,17 @@ func (sp *SegmentProcessor) crc32Check(crc32 uint32, data []byte) bool {
 	return sp.crc32er.Checksum(data) == crc32
 }
 
-func (sp *SegmentProcessor) Close() error {
+func (sp *SegmentProcessor) closeFile() error {
 	if sp.f != nil {
-		return sp.f.Close()
+		err := sp.f.Close()
+		sp.f = nil
+		return err
 	}
 	return nil
+}
+
+func (sp *SegmentProcessor) Close() error {
+	return sp.closeFile()
 }
 
 func (sp *SegmentProcessor) serializateUint32(b []byte, v uint32) {

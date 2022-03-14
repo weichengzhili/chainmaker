@@ -44,8 +44,8 @@ func (rc *ReaderCache) GetReader(segmentID uint64) *refReader {
 
 func (rc *ReaderCache) GetAndNewReader(segmentID uint64, new func() (*refReader, error)) (*refReader, error) {
 	rc.rw.RLock()
-	defer rc.rw.RUnlock()
 	v, ok := rc.readers[segmentID]
+	rc.rw.RUnlock()
 	if !ok {
 		if new == nil {
 			return nil, errors.New("new func is nil")
@@ -58,7 +58,9 @@ func (rc *ReaderCache) GetAndNewReader(segmentID uint64, new func() (*refReader,
 			return nil, err
 		}
 		v.access()
+		rc.rw.Lock()
 		rc.put(segmentID, v)
+		rc.rw.Unlock()
 	}
 	return v, nil
 }

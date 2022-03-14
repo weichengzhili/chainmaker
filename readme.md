@@ -64,7 +64,7 @@ type Options struct {
 			fmt.Println("data:", string(data))
 		}
 	}
-   
+	it.Release()  //迭代器使用后要记得释放，否则会造成后台清理难以执行
 	l.Close()
    ```
    *实例2

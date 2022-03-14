@@ -17,13 +17,12 @@ var (
 )
 
 func TestLws_Write(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(3))
+	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(6))
 	require.Nil(t, err)
 	data := []byte("hello world")
 	err = l.Write(0, data)
 	require.Nil(t, err)
-	// time.Sleep(time.Second * 5)
-	l.Flush()
+	l.Purge(PurgeWithSoftEntries(10))
 	l.Close()
 	require.Nil(t, err)
 }
@@ -32,6 +31,7 @@ func TestLws_Read(t *testing.T) {
 	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"))
 	require.Nil(t, err)
 	it := l.NewLogIterator()
+	defer it.Release()
 	for it.HasNext() {
 		data, err := it.Next().Get()
 		if err != nil {
@@ -40,6 +40,8 @@ func TestLws_Read(t *testing.T) {
 			t.Log(string(data))
 		}
 	}
+
+	time.Sleep(3 * time.Second)
 	l.Close()
 }
 

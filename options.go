@@ -2,6 +2,10 @@
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package lws
 
 type FlushStrategy int
@@ -10,8 +14,7 @@ type FileType int
 type WriteFlag int
 
 const (
-	WF_SYNCWRITE WriteFlag = 1 //同步写，写系统不刷盘
-
+	WF_SYNCWRITE  WriteFlag = 1                  //同步写，写系统不刷盘
 	WF_TIMEDFLUSH WriteFlag = (1<<iota - 1) << 1 //定时刷盘
 	WF_QUOTAFLUSH                                //日志写入数量刷盘
 	WF_SYNCFLUSH                                 //同步刷盘
@@ -27,6 +30,7 @@ type Options struct {
 	FlushQuota                 int       //刷盘限定值
 	SegmentSize                uint64    //文件的大小限制 默认64M 代表不限制
 	Ft                         FileType  //文件类型(1 普通文件 2 mmap) 默认1
+	MmapFileLock               bool      //文件映射的时候，是否锁定内存以提高write速度
 	LogFileLimitForPurge       int       //存在日志文件限制
 	LogEntryCountLimitForPurge int       //存在日志条目限制
 	FilePrefix                 string
@@ -75,5 +79,41 @@ func WithFilePrex(prex string) Opt {
 func WithFileExtension(ext string) Opt {
 	return func(o *Options) {
 		o.FileExtension = ext
+	}
+}
+
+func WithMmapFileLock() Opt {
+	return func(o *Options) {
+		o.MmapFileLock = true
+	}
+}
+
+type PurgeOptions struct {
+	mode purgeMod
+	purgeLimit
+}
+type purgeLimit struct {
+	keepFiles int
+	// keepEntries     int
+	keepSoftEntries int
+}
+
+type PurgeOpt func(*PurgeOptions)
+
+func PurgeWithKeepFiles(c int) PurgeOpt {
+	return func(po *PurgeOptions) {
+		po.keepFiles = c
+	}
+}
+
+func PurgeWithSoftEntries(c int) PurgeOpt {
+	return func(po *PurgeOptions) {
+		po.keepSoftEntries = c
+	}
+}
+
+func PurgeWithAsync() PurgeOpt {
+	return func(po *PurgeOptions) {
+		po.mode = purgeModAsync
 	}
 }

@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	chainmaker.org/chainmaker/common/v2 v2.1.1
+	github.com/lestrrat-go/file-rotatelogs v2.4.0+incompatible
 	github.com/stretchr/testify v1.7.0
 	github.com/tidwall/wal v1.1.7
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c

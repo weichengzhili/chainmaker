@@ -51,7 +51,8 @@ func (fc *fileContainer) ReaderRelease() {
 }
 
 type EntryIterator struct {
-	index     uint64         //迭代器当前的位置
+	index     uint64 //迭代器当前的位置
+	free      bool
 	container EntryContainer //日志容器
 }
 
@@ -72,12 +73,14 @@ func newEntryIterator(c EntryContainer) *EntryIterator {
 func (it *EntryIterator) SkipToFirst() {
 	it.index = it.container.FirstIndex() - 1
 }
+
 func (it *EntryIterator) SkipToLast() {
 	it.index = it.container.LastIndex() + 1
 }
 func (it *EntryIterator) HasNext() bool {
 	return it.index < it.container.LastIndex()
 }
+
 func (it *EntryIterator) Next() *EntryElemnet {
 	it.index++
 	return it.element()
@@ -98,6 +101,10 @@ func (it *EntryIterator) Previous() *EntryElemnet {
 	return it.element()
 }
 func (it *EntryIterator) Release() {
+	if it.free {
+		return
+	}
+	it.free = true
 	it.container.ReaderRelease()
 }
 

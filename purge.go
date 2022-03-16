@@ -11,6 +11,13 @@ import (
 	"syscall"
 )
 
+type writeNoticeType int8
+
+const (
+	newFile writeNoticeType = 1 << iota
+	newLog
+)
+
 var (
 	purgeLocker = NewChansema(1)
 )

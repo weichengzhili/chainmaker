@@ -323,3 +323,11 @@ func BenchmarkMmapAllFileR(b *testing.B) {
 		allMmapFileReplice(i)
 	}
 }
+
+// func TestZeroMap(t *testing.T) {
+// 	m, err := OpenZeroMmap("./zm.log", 4*1024, os.O_RDWR|os.O_CREATE, 0644, syscall.MAP_SHARED, false)
+// 	require.Nil(t, err)
+// 	buf, err := m.NextAt(4*1024, 100)
+// 	require.Nil(t, err)
+// 	copy(buf, "hello world")
+// }

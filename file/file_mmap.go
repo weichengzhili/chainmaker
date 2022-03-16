@@ -13,12 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var (
-	OsPageSize        = os.Getpagesize()
-	strNegativeOffset = "negative offset"
-	strSeekOffInvaild = "seek offset invaild"
-)
-
 const maxRW = 1 << 30
 
 //concurrent operations are unsafe
@@ -153,7 +147,6 @@ func (mf *MmapFile) remap(offset int64) error {
 		mf.mmArea = mmi.mmArea
 		mf.mmOff = mmi.mmOff
 	}
-
 	return err
 }
 

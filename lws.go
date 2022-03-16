@@ -228,7 +228,7 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.sw.Size() > l.opts.SegmentSize {
+	if uint64(l.sw.Size()) > l.opts.SegmentSize {
 		writeNotice |= newFile
 		if err = l.rollover(); err != nil {
 			return err

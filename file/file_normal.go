@@ -2,6 +2,10 @@
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 package file
 
 import (
@@ -13,7 +17,11 @@ type NormalFile struct {
 }
 
 func NewFile(path string) (*NormalFile, error) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	return OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+}
+
+func OpenFile(path string, flag int, perm os.FileMode) (*NormalFile, error) {
+	f, err := os.OpenFile(path, flag, perm)
 	if err != nil {
 		return nil, err
 	}

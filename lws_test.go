@@ -17,7 +17,7 @@ var (
 )
 
 func TestLws_Write(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(6))
+	l, err := Open(testPath, WithSegmentSize(50), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(6))
 	require.Nil(t, err)
 	data := []byte("hello world")
 	err = l.Write(0, data)
@@ -40,8 +40,6 @@ func TestLws_Read(t *testing.T) {
 			t.Log(string(data))
 		}
 	}
-
-	time.Sleep(3 * time.Second)
 	l.Close()
 }
 

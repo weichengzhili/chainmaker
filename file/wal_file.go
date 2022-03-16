@@ -2,8 +2,21 @@
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
+/*
+Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 
 package file
+
+import "os"
+
+var (
+	OsPageSize        = os.Getpagesize()
+	strNegativeOffset = "negative offset"
+	strSeekOffInvaild = "seek offset invaild"
+	strInvaildArg     = "arguments invaild"
+)
 
 type WalFile interface {
 	Write([]byte) (int, error)

@@ -25,6 +25,7 @@ var (
 		FileExtension: "wal",
 		Wf:            WF_TIMEDFLUSH,
 		FlushQuota:    timeDelay,
+		BufferSize:    -1, //-1无配置
 	}
 
 	fileReg             = `%s\d{5}_\d+\.%s`
@@ -115,6 +116,7 @@ func (l *Lws) open(opt ...Opt) error {
 		Wf:          l.opts.Wf,
 		Fv:          l.opts.FlushQuota,
 		MapLock:     l.opts.MmapFileLock,
+		BufferSize:  l.opts.BufferSize,
 	})
 	if err != nil {
 		return err
@@ -228,7 +230,7 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if uint64(l.sw.Size()) > l.opts.SegmentSize {
+	if l.opts.SegmentSize > 0 && uint64(l.sw.Size()) > l.opts.SegmentSize {
 		writeNotice |= newFile
 		if err = l.rollover(); err != nil {
 			return err

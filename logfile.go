@@ -29,7 +29,7 @@ type logfile struct {
 	sync func() error
 }
 
-func newLogFile(fn string, ft FileType, bufSize int) (*logfile, error) {
+func newLogFile(fn string, ft FileType, bufSize int, mlock bool) (*logfile, error) {
 	f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
@@ -48,9 +48,11 @@ func newLogFile(fn string, ft FileType, bufSize int) (*logfile, error) {
 			return nil, errors.New("mmp size must greater than 0 for mmap file")
 		}
 		var buf *fbuffer.ZeroMmap
-		buf, err = fbuffer.NewZeroMmap(f, bufSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED, false)
+		buf, err = fbuffer.NewZeroMmap(f, bufSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED, mlock)
 		sync = buf.Sync
 		fb = buf
+	default:
+		return nil, ErrFileTypeNotSupport
 	}
 	if err != nil {
 		return nil, err

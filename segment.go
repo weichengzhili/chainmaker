@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	file_mmap_size = 1 << 26
-	checkSumPoly   = 0xD5828281
-	bufferSize     = 1 << 26
+	checkSumPoly  = 0xD5828281
+	bufferSize    = 1 << 27
+	maxBufferSize = 1 << 29
 
 	lenSize   = 4
 	crc32Size = 4
@@ -25,15 +25,8 @@ const (
 
 var (
 	ErrFileTypeNotSupport = errors.New("this file type is not supported")
-	ErrNoEnoughData       = errors.New("no enough data in buffer")
-	ErrTruncate           = errors.New("truncation out of range")
 	ErrSegmentIndex       = errors.New("index out of segment range")
 )
-
-type WriteFlusher interface {
-	Write([]byte) (int, error)
-	Flush() error
-}
 
 type posEntry struct {
 	*LogEntry
@@ -88,14 +81,16 @@ type WriterOptions struct {
 	Wf          WriteFlag
 	Fv          int
 	MapLock     bool
+	BufferSize  int
 }
 
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
-		SegmentProcessor: newSegmentProcessor(segmentConfig{
+		SegmentProcessor: newSegmentProcessor(procConfig{
 			Segment:     s,
 			segmentSize: int(opt.SegmentSize),
 			mapLock:     opt.MapLock,
+			bufferSize:  opt.BufferSize,
 		}),
 		ft:          opt.Ft,
 		wf:          opt.Wf,
@@ -177,17 +172,14 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 		return err
 	}
 	f, old := sw.f, sw.s
-	sw.s = segmentConfig{
-		Segment:     s,
-		segmentSize: old.segmentSize,
-	}
+	sw.s = old
+	sw.s.Segment = s
 	if err := sw.open(); err != nil {
 		sw.s = old
 		return err
 	}
 	f.Close()
 	sw.count = 0
-	// sw.buf.Reset()
 	return nil
 }
 
@@ -261,9 +253,10 @@ type SegmentReader struct {
 func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 	var (
 		sr = &SegmentReader{
-			SegmentProcessor: newSegmentProcessor(segmentConfig{
+			SegmentProcessor: newSegmentProcessor(procConfig{
 				Segment:     s,
 				segmentSize: int(s.Size),
+				bufferSize:  -1,
 			}),
 		}
 		err error
@@ -322,19 +315,19 @@ func (sr *SegmentReader) LastIndex() uint64 {
 
 type SegmentProcessor struct {
 	f       *logfile
-	s       segmentConfig //对应的段信息
+	s       procConfig //对应的段信息
 	crc32er *crc32er
 	mapLock bool
-	// buf2    fileBuffer
 }
 
-type segmentConfig struct {
+type procConfig struct {
 	*Segment
 	segmentSize int
 	mapLock     bool
+	bufferSize  int
 }
 
-func newSegmentProcessor(s segmentConfig) *SegmentProcessor {
+func newSegmentProcessor(s procConfig) *SegmentProcessor {
 	return &SegmentProcessor{
 		s:       s,
 		crc32er: newCrc32er(checkSumPoly),
@@ -343,12 +336,19 @@ func newSegmentProcessor(s segmentConfig) *SegmentProcessor {
 }
 
 func (sp *SegmentProcessor) open(ft FileType) error {
-	mmap_size := file_mmap_size
-	if sp.s.segmentSize > 0 && mmap_size > sp.s.segmentSize {
-		mmap_size = sp.s.segmentSize
+	bufsz := sp.s.bufferSize
+	if bufsz < 0 {
+		if sp.s.segmentSize > 0 {
+			bufsz = sp.s.segmentSize
+		} else {
+			bufsz = bufferSize
+		}
+	}
+	if bufsz > maxBufferSize {
+		bufsz = maxBufferSize
 	}
 
-	f, err := newLogFile(sp.s.Path, ft, mmap_size)
+	f, err := newLogFile(sp.s.Path, ft, bufsz, sp.s.mapLock)
 	if err != nil {
 		return err
 	}
@@ -384,9 +384,10 @@ func (sp *SegmentProcessor) crc32Check(crc32 uint32, data []byte) bool {
 
 func (sp *SegmentProcessor) closeFile() error {
 	if sp.f != nil {
-		err := sp.f.Close()
+		if err := sp.f.Close(); err != nil {
+			return err
+		}
 		sp.f = nil
-		return err
 	}
 	return nil
 }

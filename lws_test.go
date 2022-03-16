@@ -6,6 +6,7 @@ package lws
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ var (
 )
 
 func TestLws_Write(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(50), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(6))
+	l, err := Open(testPath, WithSegmentSize(0), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(6))
 	require.Nil(t, err)
 	data := []byte("hello world")
 	err = l.Write(0, data)
@@ -28,7 +29,7 @@ func TestLws_Write(t *testing.T) {
 }
 
 func TestLws_Read(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"))
+	l, err := Open(testPath, WithSegmentSize(30), WithWriteFileType(FT_NORMAL))
 	require.Nil(t, err)
 	it := l.NewLogIterator()
 	defer it.Release()
@@ -139,6 +140,16 @@ func TestLws_WriteReadObj(t *testing.T) {
 		}
 	}
 	l.Close()
+}
+
+func TestAli(t *testing.T) {
+	OsPageSize := os.Getpagesize()
+	OsPageSizeMask := ^(OsPageSize - 1)
+	size := 134217728
+	if size&^OsPageSizeMask != 0 {
+		size = (size + OsPageSize) & OsPageSizeMask
+	}
+	t.Log(size)
 }
 
 // var (

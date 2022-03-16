@@ -2,10 +2,6 @@
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
-/*
-Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
-SPDX-License-Identifier: Apache-2.0
-*/
 package lws
 
 type FlushStrategy int
@@ -31,8 +27,9 @@ type Options struct {
 	SegmentSize                uint64    //文件的大小限制 默认64M 代表不限制
 	Ft                         FileType  //文件类型(1 普通文件 2 mmap) 默认1
 	MmapFileLock               bool      //文件映射的时候，是否锁定内存以提高write速度
-	LogFileLimitForPurge       int       //存在日志文件限制
-	LogEntryCountLimitForPurge int       //存在日志条目限制
+	BufferSize                 int
+	LogFileLimitForPurge       int //存在日志文件限制
+	LogEntryCountLimitForPurge int //存在日志条目限制
 	FilePrefix                 string
 	FileExtension              string
 }
@@ -85,6 +82,12 @@ func WithFileExtension(ext string) Opt {
 func WithMmapFileLock() Opt {
 	return func(o *Options) {
 		o.MmapFileLock = true
+	}
+}
+
+func WithBufferSize(s int) Opt {
+	return func(o *Options) {
+		o.BufferSize = s
 	}
 }
 

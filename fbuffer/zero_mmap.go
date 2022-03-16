@@ -36,34 +36,6 @@ type area struct {
 	len int
 }
 
-// func OpenZeroMmap(path string, mmSize int, flag int, perm os.FileMode, mapFlag int, lock bool) (*ZeroMmap, error) {
-// 	f, err := os.OpenFile(path, flag, perm)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	defer func() {
-// 		if err != nil {
-// 			f.Close()
-// 		}
-// 	}()
-// 	finfo, err := f.Stat()
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	allocator, err := allocate.NewMmapAllocator(f, 0, mmSize, fileFlagToMapPort(flag), mapFlag, lock)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	mf := &ZeroMmap{
-// 		f:         f,
-// 		fSize:     finfo.Size(),
-// 		mmSize:    mmSize,
-// 		allocator: allocator,
-// 	}
-
-// 	return mf, nil
-// }
-
 func NewZeroMmap(f *os.File, mmSize int, mapPort, mapFlag int, lock bool) (*ZeroMmap, error) {
 	finfo, err := f.Stat()
 	if err != nil {
@@ -82,10 +54,6 @@ func NewZeroMmap(f *os.File, mmSize int, mapPort, mapFlag int, lock bool) (*Zero
 }
 
 func (zm *ZeroMmap) Truncate(size int64) error {
-	// err := zm.f.Truncate(size)
-	// if err != nil {
-	// 	return err
-	// }
 	zm.fSize = size
 	if zm.offset > size {
 		zm.offset = size
@@ -225,6 +193,7 @@ func (zm *ZeroMmap) Sync() error {
 	if overlap.len == 0 {
 		return nil
 	}
+	overlap.off = int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
 	buf, err := zm.allocator.AllocAt(overlap.off, overlap.len)
 	if err != nil {
 		if err == allocate.End {
@@ -247,12 +216,6 @@ func (zm *ZeroMmap) Close() error {
 		zm.allocator.Release()
 		zm.allocator = nil
 	}
-	// if zm.f != nil {
-	// 	if err := zm.f.Close(); err != nil {
-	// 		return err
-	// 	}
-	// 	zm.f = nil
-	// }
 	return nil
 }
 

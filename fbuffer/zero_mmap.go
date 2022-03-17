@@ -193,7 +193,11 @@ func (zm *ZeroMmap) Sync() error {
 	if overlap.len == 0 {
 		return nil
 	}
-	overlap.off = int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
+	off := int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
+	overlap = area{
+		off: off,
+		len: int(overlap.off-off) + overlap.len,
+	}
 	buf, err := zm.allocator.AllocAt(overlap.off, overlap.len)
 	if err != nil {
 		if err == allocate.End {

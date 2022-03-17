@@ -38,8 +38,8 @@ type area struct {
 	len int
 }
 
-func NewMmapFile(path string, mmSize int, lock bool) (*MmapFile, error) {
-	return OpenMmapFile(path, mmSize, os.O_RDWR|os.O_CREATE, 0644, syscall.MAP_SHARED, lock)
+func NewMmapFile(path string, mmSize int) (*MmapFile, error) {
+	return OpenMmapFile(path, mmSize, os.O_RDWR|os.O_CREATE, 0644, syscall.MAP_SHARED, false)
 }
 
 func OpenMmapFile(path string, mmSize int, flag int, perm os.FileMode, mapFlag int, lock bool) (*MmapFile, error) {
@@ -217,6 +217,11 @@ func (mf *MmapFile) Sync() error {
 	})
 
 	if mf.mmArea != nil && overlap.len > 0 {
+		off := int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
+		overlap = area{
+			off: off,
+			len: int(overlap.off-off) + overlap.len,
+		}
 		if err := unix.Msync(mf.mmArea[overlap.off:overlap.off+int64(overlap.len)], unix.MS_SYNC); err != nil {
 			return err
 		}

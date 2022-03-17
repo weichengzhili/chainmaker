@@ -66,7 +66,7 @@ func initFileMmap(path string) {
 		panic(err)
 	}
 
-	mapFile, err = NewMmapFile("./test_mmap100.wal", 1<<30, false)
+	mapFile, err = NewMmapFile("./test_mmap100.wal", 1<<30)
 	if err != nil {
 		panic(err)
 	}
@@ -91,7 +91,7 @@ func initFileMmap(path string) {
 func TestMmapWrite(t *testing.T) {
 	fileSize := 1 << 30
 	map_size := 1 << 30
-	f, err := NewMmapFile("./test_mmap.wal", map_size, false)
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
 	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
 	//data := []byte("hello world@@")
@@ -106,7 +106,7 @@ func TestMmapWrite(t *testing.T) {
 func TestMmapRead(t *testing.T) {
 	fileSize := 1 << 12
 	map_size := 1 << 16
-	f, err := NewMmapFile("./test_mmap.wal", map_size, false)
+	f, err := NewMmapFile("./test_mmap.wal", map_size)
 	require.Nil(t, err)
 	err = f.Truncate(int64(fileSize))
 	require.Nil(t, err)
@@ -170,7 +170,7 @@ func TestFileRead(t *testing.T) {
 func mmapT(i int) {
 	fileSize := 1 << 30
 	map_size := 1 << 30
-	f, err := NewMmapFile(fmt.Sprintf("./test_mmap%d.wal", i), map_size, false)
+	f, err := NewMmapFile(fmt.Sprintf("./test_mmap%d.wal", i), map_size)
 	if err != nil {
 		panic(err)
 	}

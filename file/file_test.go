@@ -37,7 +37,6 @@ var (
 	mmapFileTo   []byte
 	mapFile      *MmapFile
 	normalf      *os.File
-	// copyf        *CopyFile
 )
 
 func init() {
@@ -70,7 +69,7 @@ func initFileMmap(path string) {
 	if err != nil {
 		panic(err)
 	}
-	// syscall.Mlock(mapFile.mmArea)
+
 	err = mapFile.Truncate(1 << 30)
 	if err != nil {
 		panic(err)
@@ -82,10 +81,6 @@ func initFileMmap(path string) {
 	}
 	f.Truncate(1 << 30)
 
-	// copyf, err = NewCopyFile("./test_copy0.wal", 1<<30)
-	// if err != nil {
-	// 	panic(err)
-	// }
 }
 
 func TestMmapWrite(t *testing.T) {
@@ -177,7 +172,7 @@ func mmapT(i int) {
 	err = f.Truncate(int64(fileSize))
 	for i := 0; i < fileSize/len(valueNMBByte); i++ {
 		f.Write(valueNMBByte)
-		//f.Sync()
+		f.Sync()
 	}
 	//f.Sync()
 	f.Close()
@@ -306,7 +301,6 @@ func allMmapFileReplice(i int) {
 	//}
 	//mapFile.Truncate(1 << 30)
 	start := time.Now()
-	mapFile.remap(0)
 	second := time.Now()
 	fmt.Println("i:", i, "---", second.Sub(start))
 	cn := len(valueNMB)
@@ -323,11 +317,3 @@ func BenchmarkMmapAllFileR(b *testing.B) {
 		allMmapFileReplice(i)
 	}
 }
-
-// func TestZeroMap(t *testing.T) {
-// 	m, err := OpenZeroMmap("./zm.log", 4*1024, os.O_RDWR|os.O_CREATE, 0644, syscall.MAP_SHARED, false)
-// 	require.Nil(t, err)
-// 	buf, err := m.NextAt(4*1024, 100)
-// 	require.Nil(t, err)
-// 	copy(buf, "hello world")
-// }

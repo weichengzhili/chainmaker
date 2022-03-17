@@ -65,6 +65,7 @@ func newCrc32er(poly uint32) *crc32er {
 
 type SegmentWriter struct {
 	*SegmentProcessor
+	s           *Segment
 	ft          FileType
 	wf          WriteFlag //刷盘策略
 	threshold   int
@@ -87,18 +88,19 @@ type WriterOptions struct {
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
 		SegmentProcessor: newSegmentProcessor(procConfig{
-			Segment:     s,
 			segmentSize: int(opt.SegmentSize),
 			mapLock:     opt.MapLock,
 			bufferSize:  opt.BufferSize,
+			ft:          opt.Ft,
 		}),
+		s:           s,
 		ft:          opt.Ft,
 		wf:          opt.Wf,
 		segmentSize: int(opt.SegmentSize),
 		threshold:   opt.Fv,
 		closeCh:     make(chan struct{}),
 	}
-	if err := sw.open(); err != nil {
+	if err := sw.open(s); err != nil {
 		return nil, err
 	}
 	if err := sw.readAndCheck(); err != nil {
@@ -117,9 +119,9 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	return sw, nil
 }
 
-func (sw *SegmentWriter) open() error {
-	return sw.SegmentProcessor.open(sw.ft)
-}
+// func (sw *SegmentWriter) open() error {
+// 	return sw.SegmentProcessor.open(sw.s)
+// }
 
 func (sw *SegmentWriter) readAndCheck() (err error) {
 	sw.traverseLogEntries(func(ue *posEntry) bool {
@@ -171,14 +173,10 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 	if err := sw.Flush(); err != nil {
 		return err
 	}
-	f, old := sw.f, sw.s
-	sw.s = old
-	sw.s.Segment = s
-	if err := sw.open(); err != nil {
-		sw.s = old
+	if err := sw.open(s); err != nil {
 		return err
 	}
-	f.Close()
+	sw.s = s
 	sw.count = 0
 	return nil
 }
@@ -247,6 +245,7 @@ func (sw *SegmentWriter) Close() error {
 
 type SegmentReader struct {
 	*SegmentProcessor
+	s   *Segment
 	pos []int //记录每个entry的起始位置
 }
 
@@ -254,15 +253,16 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 	var (
 		sr = &SegmentReader{
 			SegmentProcessor: newSegmentProcessor(procConfig{
-				Segment:     s,
 				segmentSize: int(s.Size),
 				bufferSize:  -1,
+				ft:          ft,
 			}),
+			s: s,
 		}
 		err error
 	)
 
-	if err = sr.open(ft); err != nil {
+	if err = sr.open(s); err != nil {
 		return nil, err
 	}
 
@@ -315,31 +315,29 @@ func (sr *SegmentReader) LastIndex() uint64 {
 
 type SegmentProcessor struct {
 	f       *logfile
-	s       procConfig //对应的段信息
+	pc      procConfig //对应的段信息
 	crc32er *crc32er
-	mapLock bool
 }
 
 type procConfig struct {
-	*Segment
 	segmentSize int
 	mapLock     bool
 	bufferSize  int
+	ft          FileType
 }
 
-func newSegmentProcessor(s procConfig) *SegmentProcessor {
+func newSegmentProcessor(pc procConfig) *SegmentProcessor {
 	return &SegmentProcessor{
-		s:       s,
+		pc:      pc,
 		crc32er: newCrc32er(checkSumPoly),
-		mapLock: s.mapLock,
 	}
 }
 
-func (sp *SegmentProcessor) open(ft FileType) error {
-	bufsz := sp.s.bufferSize
+func (sp *SegmentProcessor) open(s *Segment) error {
+	bufsz := sp.pc.bufferSize
 	if bufsz < 0 {
-		if sp.s.segmentSize > 0 {
-			bufsz = sp.s.segmentSize
+		if sp.pc.segmentSize > 0 {
+			bufsz = sp.pc.segmentSize
 		} else {
 			bufsz = bufferSize
 		}
@@ -347,14 +345,42 @@ func (sp *SegmentProcessor) open(ft FileType) error {
 	if bufsz > maxBufferSize {
 		bufsz = maxBufferSize
 	}
-
-	f, err := newLogFile(sp.s.Path, ft, bufsz, sp.s.mapLock)
+	f, err := newLogFile(s.Path, sp.pc.ft, bufsz, sp.pc.mapLock)
 	if err != nil {
 		return err
+	}
+	if sp.f != nil {
+		sp.f.Close()
 	}
 	sp.f = f
 	return nil
 }
+
+// func (sp *SegmentProcessor) open(ft FileType) error {
+// 	bufsz := sp.s.bufferSize
+// 	if bufsz < 0 {
+// 		if sp.s.segmentSize > 0 {
+// 			bufsz = sp.s.segmentSize
+// 		} else {
+// 			bufsz = bufferSize
+// 		}
+// 	}
+// 	if bufsz > maxBufferSize {
+// 		bufsz = maxBufferSize
+// 	}
+// 	if ft == FT_MMAP && sp.s.bufferReuse && sp.f != nil {
+// 		if err := sp.f.Replace(sp.s.Path); err == nil {
+// 			return nil
+// 		}
+// 	}
+
+// 	f, err := newLogFile(sp.s.Path, ft, bufsz, sp.s.mapLock)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	sp.f = f
+// 	return nil
+// }
 
 func (sp *SegmentProcessor) traverseLogEntries(call func(*posEntry) bool) {
 	pos := 0

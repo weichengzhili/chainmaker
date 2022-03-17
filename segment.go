@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	checkSumPoly  = 0xD5828281
+	checkSumPoly  = crc32.IEEE
 	bufferSize    = 1 << 27
 	maxBufferSize = 1 << 29
 
@@ -47,17 +47,17 @@ type Segment struct {
 	Path  string //文件路径
 }
 
-type crc32er struct {
+type crc32Ctor struct {
 	poly  uint32
 	table *crc32.Table
 }
 
-func (crc *crc32er) Checksum(data []byte) uint32 {
+func (crc *crc32Ctor) Checksum(data []byte) uint32 {
 	return crc32.Checksum(data, crc.table)
 }
 
-func newCrc32er(poly uint32) *crc32er {
-	return &crc32er{
+func newCrc32er(poly uint32) *crc32Ctor {
+	return &crc32Ctor{
 		poly:  poly,
 		table: crc32.MakeTable(poly),
 	}
@@ -316,7 +316,7 @@ func (sr *SegmentReader) LastIndex() uint64 {
 type SegmentProcessor struct {
 	f       *logfile
 	pc      procConfig //对应的段信息
-	crc32er *crc32er
+	crc32er *crc32Ctor
 }
 
 type procConfig struct {
@@ -336,14 +336,12 @@ func newSegmentProcessor(pc procConfig) *SegmentProcessor {
 func (sp *SegmentProcessor) open(s *Segment) error {
 	bufsz := sp.pc.bufferSize
 	if bufsz < 0 {
-		if sp.pc.segmentSize > 0 {
-			bufsz = sp.pc.segmentSize
-		} else {
+		bufsz = sp.pc.segmentSize
+		if bufsz == 0 {
 			bufsz = bufferSize
+		} else if bufsz > maxBufferSize {
+			bufsz = maxBufferSize
 		}
-	}
-	if bufsz > maxBufferSize {
-		bufsz = maxBufferSize
 	}
 	f, err := newLogFile(s.Path, sp.pc.ft, bufsz, sp.pc.mapLock)
 	if err != nil {
@@ -355,32 +353,6 @@ func (sp *SegmentProcessor) open(s *Segment) error {
 	sp.f = f
 	return nil
 }
-
-// func (sp *SegmentProcessor) open(ft FileType) error {
-// 	bufsz := sp.s.bufferSize
-// 	if bufsz < 0 {
-// 		if sp.s.segmentSize > 0 {
-// 			bufsz = sp.s.segmentSize
-// 		} else {
-// 			bufsz = bufferSize
-// 		}
-// 	}
-// 	if bufsz > maxBufferSize {
-// 		bufsz = maxBufferSize
-// 	}
-// 	if ft == FT_MMAP && sp.s.bufferReuse && sp.f != nil {
-// 		if err := sp.f.Replace(sp.s.Path); err == nil {
-// 			return nil
-// 		}
-// 	}
-
-// 	f, err := newLogFile(sp.s.Path, ft, bufsz, sp.s.mapLock)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	sp.f = f
-// 	return nil
-// }
 
 func (sp *SegmentProcessor) traverseLogEntries(call func(*posEntry) bool) {
 	pos := 0

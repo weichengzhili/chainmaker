@@ -126,3 +126,16 @@ type Options struct {
    | 同步写   | 140ns/op  | 3800ns/op |
    | 同步刷盘 | 1.39ms/op | 20.6ms/op |
    | 定时刷盘 | 120ns/op  | 不支持     |
+
+
+6. 与"github.com/tidwall/wal"对比
+	环境 macos 12Core 16Mem
+   | 场景     |lws        |wal |
+   | ----    | ----      | ----      |
+   | 30M   |  44ms/op  |  126ms/op |
+   | 50M  |  68ms/op |  180ms/op |
+   | 80M  |  133ms/op  | 295ms/op |
+   | 100M | 179ms/op | 600ms/op |
+
+
+   

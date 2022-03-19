@@ -25,7 +25,6 @@ var (
 type ZeroMmap struct {
 	f         *os.File //映射的文件
 	fSize     int64    //文件大小
-	offset    int64    //读写偏移
 	waitSync  area
 	mmSize    int
 	mmOff     int64
@@ -54,48 +53,15 @@ func NewZeroMmap(f *os.File, mmSize int, mapPort, mapFlag int, lock bool) (*Zero
 }
 
 func (zm *ZeroMmap) Truncate(size int64) error {
+	if size < 0 {
+		return errors.New(strInvaildArg)
+	}
 	zm.fSize = size
-	if zm.offset > size {
-		zm.offset = size
-	}
 	return nil
-}
-
-func (zm *ZeroMmap) Seek(offset int64, whence int) (ret int64, err error) {
-	switch whence {
-	case io.SeekStart:
-	case io.SeekCurrent:
-		offset += zm.offset
-	case io.SeekEnd:
-		offset += zm.fSize
-	}
-	if offset < 0 {
-		return 0, errors.New(strSeekOffInvaild)
-	}
-	zm.offset = offset
-	return zm.offset, nil
-}
-
-func (zm *ZeroMmap) Read(n int) ([]byte, error) {
-	data, err := zm.readAt(zm.offset, n)
-	if err == nil {
-		zm.offset += int64(len(data))
-	}
-	return data, err
 }
 
 func (zm *ZeroMmap) ReadAt(offset int64, n int) ([]byte, error) {
 	return zm.readAt(offset, n)
-}
-
-//concurrent operations are unsafe
-func (zm *ZeroMmap) Next(n int) ([]byte, error) {
-	if n <= 0 {
-		return nil, errors.New(strInvaildArg)
-	}
-	data, err := zm.nextAt(zm.offset, n)
-	zm.offset += int64(len(data))
-	return data, err
 }
 
 func (zm *ZeroMmap) NextAt(offset int64, n int) ([]byte, error) {

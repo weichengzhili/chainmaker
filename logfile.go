@@ -6,33 +6,43 @@ package lws
 
 import (
 	"encoding/binary"
-	"errors"
 	"io"
 	"os"
 	"syscall"
 
 	"chainmaker.org/chainmaker/lws/fbuffer"
+	"github.com/pkg/errors"
 )
 
 type fileBuffer interface {
 	Truncate(size int64) error
-	Seek(offset int64, whence int) (int64, error)
 	ReadAt(offset int64, n int) ([]byte, error)
-	Next(n int) ([]byte, error)
+	NextAt(offset int64, n int) ([]byte, error)
 	Close() error
 	Size() int64
 	WriteBack() error
 }
 type logfile struct {
 	*os.File
-	buf  fileBuffer
-	sync func() error
+	buf    fileBuffer
+	sync   func() error
+	offset int64
 }
 
-func newLogFile(fn string, ft FileType, bufSize int, mlock bool) (*logfile, error) {
+func newLogFile(fn string, ft FileType, segmentSize int64, bufSize int, mlock bool) (*logfile, error) {
 	f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
+	}
+	finfo, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if segmentSize > finfo.Size() {
+		if err = f.Truncate(segmentSize); err != nil {
+			f.Close()
+			return nil, err
+		}
 	}
 	var (
 		fb   fileBuffer
@@ -73,7 +83,7 @@ func (f *logfile) WriteLog(t int8, data []byte, crc32 uint32) (int, error) {
 
 func (f *logfile) writeWithBuffer(t int8, data []byte, crc32 uint32) (int, error) {
 	dl := len(data) + crc32Size + typeSize
-	buf, err := f.buf.Next(dl + lenSize)
+	buf, err := f.buf.NextAt(f.offset, dl+lenSize)
 	if err != nil {
 		return 0, err
 	}
@@ -81,6 +91,7 @@ func (f *logfile) writeWithBuffer(t int8, data []byte, crc32 uint32) (int, error
 	serializateUint32(buf[lenSize:], crc32)
 	buf[lenSize+crc32Size] = byte(t)
 	copy(buf[lenSize+crc32Size+1:], data)
+	f.offset += int64(len(buf))
 	return len(buf), nil
 }
 
@@ -91,7 +102,11 @@ func (f *logfile) writeNoBuffer(t int8, data []byte, crc32 uint32) (int, error) 
 	serializateUint32(buf[lenSize:], crc32)
 	buf[lenSize+crc32Size] = byte(t)
 	copy(buf[lenSize+crc32Size+1:], data)
-	return f.Write(buf)
+	n, err := f.WriteAt(buf, f.offset)
+	if err == nil {
+		f.offset += int64(n)
+	}
+	return n, err
 }
 
 func (f *logfile) hasBuffer() bool {
@@ -115,6 +130,7 @@ func (f *logfile) readWithBuffer(pos int64) (*LogEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	f.offset = pos + int64(lenSize+l)
 	c := deserializeUint32(data)
 	return &LogEntry{
 		Len:   l,
@@ -135,10 +151,11 @@ func (f *logfile) readNoBuffer(pos int64) (*LogEntry, error) {
 		return nil, nil
 	}
 	dbz := make([]byte, l)
-	_, err = f.File.ReadAt(dbz, pos+lenSize)
+	n, err := f.File.ReadAt(dbz, pos+lenSize)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
+	f.offset = pos + int64(n+lenSize)
 	c := deserializeUint32(dbz)
 	return &LogEntry{
 		Len:   l,
@@ -166,23 +183,35 @@ func (f *logfile) Sync() error {
 }
 
 func (f *logfile) Truncate(size int64) error {
-	if f.hasBuffer() {
-		if err := f.buf.Truncate(size); err != nil {
-			return err
-		}
+	if err := f.File.Truncate(size); err != nil {
+		return err
 	}
-	return f.File.Truncate(size)
+	if f.offset > size {
+		f.offset = size
+	}
+	if f.hasBuffer() {
+		return f.buf.Truncate(size)
+	}
+	return nil
 }
 
 func (f *logfile) Seek(offset int64, whence int) (int64, error) {
-	if f.hasBuffer() {
-		if _, err := f.buf.Seek(offset, whence); err != nil {
-			return -1, err
+	switch whence {
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += f.offset
+	case io.SeekEnd:
+		s := f.Size()
+		if s < 0 {
+			return f.offset, errors.WithMessage(syscall.EAGAIN, "logfile-seek")
 		}
-		off, _ := f.buf.Seek(0, io.SeekCurrent)
-		return f.File.Seek(off, io.SeekStart)
+		offset += s
 	}
-	return f.File.Seek(offset, whence)
+	if offset < 0 {
+		return f.offset, errors.New("seek invaild argument")
+	}
+	f.offset = offset
+	return f.offset, nil
 }
 
 func (f *logfile) Close() error {

@@ -24,7 +24,7 @@ const (
 type Options struct {
 	Wf                         WriteFlag //写日志标识
 	FlushQuota                 int       //刷盘限定值
-	SegmentSize                uint64    //文件的大小限制 默认64M 代表不限制
+	SegmentSize                int64     //文件的大小限制 默认64M 代表不限制
 	Ft                         FileType  //文件类型(1 普通文件 2 mmap) 默认1
 	MmapFileLock               bool      //文件映射的时候，是否锁定内存以提高write速度
 	BufferSize                 int
@@ -43,7 +43,7 @@ func WithWriteFlag(wf WriteFlag, quota int) Opt {
 	}
 }
 
-func WithSegmentSize(s uint64) Opt {
+func WithSegmentSize(s int64) Opt {
 	return func(o *Options) {
 		o.SegmentSize = s
 	}

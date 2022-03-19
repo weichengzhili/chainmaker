@@ -177,12 +177,12 @@ func (l *Lws) matchFiles() ([]string, error) {
 	return names, err
 }
 
-func (l *Lws) fileSize(file string) uint64 {
+func (l *Lws) fileSize(file string) int64 {
 	s, err := os.Stat(file)
 	if err != nil {
 		return 0
 	}
-	return uint64(s.Size())
+	return s.Size()
 }
 
 func (l *Lws) rollover() error {
@@ -229,7 +229,7 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	)
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.opts.SegmentSize > 0 && uint64(l.sw.Size()) > l.opts.SegmentSize {
+	if l.opts.SegmentSize > 0 && l.sw.Size() > l.opts.SegmentSize {
 		writeNotice |= newFile
 		if err = l.rollover(); err != nil {
 			return err
@@ -399,7 +399,7 @@ func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
 	sr, err := NewSegmentReader(&Segment{
 		Path:  path,
 		Index: 1,
-		Size:  uint64(finfo.Size()),
+		Size:  finfo.Size(),
 	}, l.opts.Ft)
 	if err != nil {
 		return nil, err

@@ -6,9 +6,13 @@ package lws
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"math/rand"
 	"testing"
 	"time"
 
+	"chainmaker.org/chainmaker/lws/file"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,10 +21,13 @@ var (
 )
 
 func TestLws_Write(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(50), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0))
+	l, err := Open(testPath, WithSegmentSize(80), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0))
 	require.Nil(t, err)
-	data := []byte("hello world")
-	for i := 0; i < 4; i++ {
+	// data := []byte("hello world")
+	rand.Seed(time.Now().Unix())
+
+	for i := 0; i < 1; i++ {
+		data := []byte(fmt.Sprintf("hello world_%d", rand.Int()))
 		err = l.Write(0, data)
 		require.Nil(t, err)
 	}
@@ -30,7 +37,7 @@ func TestLws_Write(t *testing.T) {
 }
 
 func TestLws_Read(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(30), WithWriteFileType(FT_NORMAL))
+	l, err := Open(testPath, WithFilePrex("test_"), WithSegmentSize(50), WithWriteFileType(FT_NORMAL), WithBufferSize(0))
 	require.Nil(t, err)
 	it := l.NewLogIterator()
 	defer it.Release()
@@ -43,6 +50,27 @@ func TestLws_Read(t *testing.T) {
 		}
 	}
 	l.Close()
+}
+
+func TestFileRead(t *testing.T) {
+	f, err := file.NewFile("./log/test_00002_3.wal")
+	require.Nil(t, err)
+	data := make([]byte, 40)
+	// for {
+	n, err := f.Read(data)
+	if err != nil {
+		if err == io.EOF {
+			t.Logf("readN: %d, data:%s", n, data[:n])
+			err = nil
+		}
+		require.Nil(t, err)
+		// break
+	}
+
+	t.Logf("readN: %d, data:%s", n, data[:n])
+	// }
+	err = f.Close()
+	require.Nil(t, err)
 }
 
 func TestLws_WriteFile(t *testing.T) {

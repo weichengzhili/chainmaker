@@ -5,18 +5,21 @@ SPDX-License-Identifier: Apache-2.0
 package file
 
 import (
+	"io"
 	"os"
 	"syscall"
 
 	"chainmaker.org/chainmaker/lws/fbuffer"
+	"github.com/pkg/errors"
 )
 
 const maxRW = 1 << 30
 
 //concurrent operations are unsafe
 type MmapFile struct {
-	f   *os.File //映射的文件
-	buf *fbuffer.ZeroMmap
+	f      *os.File //映射的文件
+	buf    *fbuffer.ZeroMmap
+	offset int64
 }
 
 func NewMmapFile(path string, mmSize int) (*MmapFile, error) {
@@ -56,16 +59,33 @@ func fileFlagToMapPort(flag int) int {
 }
 
 func (mf *MmapFile) Truncate(size int64) error {
-	err := mf.f.Truncate(size)
-	if err != nil {
+	if err := mf.f.Truncate(size); err != nil {
 		return err
 	}
-	mf.buf.Truncate(size)
-	return nil
+	if mf.offset > size {
+		mf.offset = size
+	}
+
+	return mf.buf.Truncate(size)
 }
 
 func (mf *MmapFile) Seek(offset int64, whence int) (ret int64, err error) {
-	return mf.buf.Seek(offset, whence)
+	switch whence {
+	case io.SeekStart:
+	case io.SeekCurrent:
+		offset += mf.offset
+	case io.SeekEnd:
+		s := mf.Size()
+		if s < 0 {
+			return mf.offset, errors.WithMessage(syscall.EAGAIN, "MmapFile-Seek")
+		}
+		offset += s
+	}
+	if offset < 0 {
+		return 0, errors.New(strSeekOffInvaild)
+	}
+	mf.offset = offset
+	return mf.offset, nil
 }
 
 //concurrent operations are unsafe
@@ -79,10 +99,11 @@ func (mf *MmapFile) WriteAt(data []byte, offset int64) (int, error) {
 
 //concurrent operations are unsafe
 func (mf *MmapFile) Write(data []byte) (int, error) {
-	b, err := mf.buf.Next(len(data))
+	b, err := mf.buf.NextAt(mf.offset, len(data))
 	if err != nil {
 		return 0, err
 	}
+	mf.offset += int64(len(b))
 	return copy(b, data), nil
 }
 
@@ -101,10 +122,11 @@ func (mf *MmapFile) ReadAt(data []byte, offset int64) (int, error) {
 
 //concurrent operations are unsafe
 func (mf *MmapFile) Read(data []byte) (int, error) {
-	b, err := mf.buf.Read(len(data))
+	b, err := mf.buf.ReadAt(mf.offset, len(data))
 	if err != nil {
 		return 0, err
 	}
+	mf.offset += int64(len(b))
 	return copy(data, b), nil
 }
 

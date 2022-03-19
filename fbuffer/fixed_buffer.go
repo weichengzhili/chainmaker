@@ -15,7 +15,6 @@ import (
 
 type fixedbuffer struct {
 	mmOff     int64 //buffer对应的文件的偏移量
-	offset    int64
 	fSize     int64
 	allocator *allocate.BytesAllocator
 	f         *os.File
@@ -40,34 +39,8 @@ func (b *fixedbuffer) Truncate(n int64) error {
 	if n < 0 {
 		return errors.New(strInvaildArg)
 	}
-	if b.offset > n {
-		b.offset = n
-	}
 	b.fSize = n
 	return nil
-}
-
-func (b *fixedbuffer) Seek(offset int64, whence int) (int64, error) {
-	switch whence {
-	case io.SeekStart:
-	case io.SeekCurrent:
-		offset += b.offset
-	case io.SeekEnd:
-		offset += b.offset
-	}
-	if offset < 0 {
-		return 0, errors.New("strSeekOffInvaild")
-	}
-	b.offset = offset
-	return b.offset, nil
-}
-
-func (b *fixedbuffer) Read(n int) ([]byte, error) {
-	data, err := b.readAt(b.offset, n)
-	if err == nil {
-		b.offset += int64(len(data))
-	}
-	return data, err
 }
 
 func (b *fixedbuffer) ReadAt(offset int64, n int) ([]byte, error) {
@@ -147,18 +120,6 @@ func (b *fixedbuffer) rebuffer(offset int64, n int, fill bool) error {
 	}
 
 	return nil
-}
-
-func (b *fixedbuffer) Next(n int) ([]byte, error) {
-	if n <= 0 {
-		return nil, errors.New(strInvaildArg)
-	}
-	buf, err := b.nextAt(b.offset, n)
-	if err != nil {
-		return nil, err
-	}
-	b.offset += int64(len(buf))
-	return buf, nil
 }
 
 func (b *fixedbuffer) NextAt(offset int64, n int) ([]byte, error) {

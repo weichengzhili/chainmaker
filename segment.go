@@ -42,7 +42,7 @@ type LogEntry struct {
 
 type Segment struct {
 	ID    uint64 //文件编号
-	Size  uint64 //文件当前大小
+	Size  int64  //文件当前大小
 	Index uint64 //文件中日志的最小索引
 	Path  string //文件路径
 }
@@ -77,7 +77,7 @@ type SegmentWriter struct {
 }
 
 type WriterOptions struct {
-	SegmentSize uint64
+	SegmentSize int64
 	Ft          FileType
 	Wf          WriteFlag
 	Fv          int
@@ -88,7 +88,7 @@ type WriterOptions struct {
 func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	sw := &SegmentWriter{
 		SegmentProcessor: newSegmentProcessor(procConfig{
-			segmentSize: int(opt.SegmentSize),
+			segmentSize: opt.SegmentSize,
 			mapLock:     opt.MapLock,
 			bufferSize:  opt.BufferSize,
 			ft:          opt.Ft,
@@ -119,14 +119,10 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 	return sw, nil
 }
 
-// func (sw *SegmentWriter) open() error {
-// 	return sw.SegmentProcessor.open(sw.s)
-// }
-
 func (sw *SegmentWriter) readAndCheck() (err error) {
 	sw.traverseLogEntries(func(ue *posEntry) bool {
 		if ue.LogEntry == nil || ue.Len == 0 || !sw.crc32Check(ue.Crc32, ue.Data) {
-			sw.f.Truncate(int64(ue.pos))
+			// sw.f.Truncate(int64(ue.pos))
 			sw.f.Seek(int64(ue.pos), io.SeekStart)
 			return true
 		}
@@ -173,6 +169,7 @@ func (sw *SegmentWriter) Replace(s *Segment) error {
 	if err := sw.Flush(); err != nil {
 		return err
 	}
+	sw.truncate()
 	if err := sw.open(s); err != nil {
 		return err
 	}
@@ -194,8 +191,10 @@ func (sw *SegmentWriter) Write(t int8, data []byte) (int, error) {
 		if err := sw.f.WriteBack(); err != nil {
 			sw.f.Seek(int64(-l), io.SeekCurrent)
 			sw.writeLocker.Unlock()
+			return 0, err
 		}
 	}
+	sw.acc++
 	sw.writeLocker.Unlock()
 	sw.tryFlush()
 	return len(data), err
@@ -210,16 +209,15 @@ func (sw *SegmentWriter) tryFlush() error {
 	if sw.wf&WF_SYNCFLUSH == WF_SYNCFLUSH {
 		return sw.Flush()
 	}
-	sw.acc++
 	if sw.wf&WF_QUOTAFLUSH == WF_QUOTAFLUSH && sw.acc >= sw.threshold {
 		return sw.Flush()
 	}
-
 	return nil
 }
 
 func (sw *SegmentWriter) Size() int64 {
-	return sw.f.Size()
+	n, _ := sw.f.Seek(0, io.SeekCurrent)
+	return n
 }
 
 func (sw *SegmentWriter) Flush() error {
@@ -238,8 +236,14 @@ func (sw *SegmentWriter) Flush() error {
 	return err
 }
 
+func (sw *SegmentWriter) truncate() error {
+	n, _ := sw.f.Seek(0, io.SeekCurrent)
+	return sw.f.Truncate(n)
+}
+
 func (sw *SegmentWriter) Close() error {
 	close(sw.closeCh)
+	sw.truncate()
 	return sw.SegmentProcessor.Close()
 }
 
@@ -253,7 +257,7 @@ func NewSegmentReader(s *Segment, ft FileType) (*SegmentReader, error) {
 	var (
 		sr = &SegmentReader{
 			SegmentProcessor: newSegmentProcessor(procConfig{
-				segmentSize: int(s.Size),
+				segmentSize: s.Size,
 				bufferSize:  -1,
 				ft:          ft,
 			}),
@@ -320,7 +324,7 @@ type SegmentProcessor struct {
 }
 
 type procConfig struct {
-	segmentSize int
+	segmentSize int64
 	mapLock     bool
 	bufferSize  int
 	ft          FileType
@@ -336,14 +340,14 @@ func newSegmentProcessor(pc procConfig) *SegmentProcessor {
 func (sp *SegmentProcessor) open(s *Segment) error {
 	bufsz := sp.pc.bufferSize
 	if bufsz < 0 {
-		bufsz = sp.pc.segmentSize
+		bufsz = int(sp.pc.segmentSize)
 		if bufsz == 0 {
 			bufsz = bufferSize
 		} else if bufsz > maxBufferSize {
 			bufsz = maxBufferSize
 		}
 	}
-	f, err := newLogFile(s.Path, sp.pc.ft, bufsz, sp.pc.mapLock)
+	f, err := newLogFile(s.Path, sp.pc.ft, sp.pc.segmentSize, bufsz, sp.pc.mapLock)
 	if err != nil {
 		return err
 	}

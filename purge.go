@@ -167,7 +167,7 @@ func (pw *purgeWorker) purgeType(swp segmentWaterPool) int {
 func (pw *purgeWorker) pureOverFilesLevel(swp segmentWaterPool) (boundary *Segment, files []string) {
 	threshold := swp.fileWaterLevel() - pw.keepFiles
 	swp.RLock()
-	swp.Traverse(func(i int, s *Segment) bool {
+	swp.ForEach(func(i int, s *Segment) bool {
 		if i < threshold {
 			files = append(files, s.Path)
 			return false
@@ -185,7 +185,7 @@ func (pw *purgeWorker) pureOverEntryLevel(swp segmentWaterPool) (boundary *Segme
 		at int
 	)
 	swp.RLock()
-	swp.Traverse(func(i int, s *Segment) bool {
+	swp.ForEach(func(i int, s *Segment) bool {
 		if s.Index > from {
 			at = i
 			return true

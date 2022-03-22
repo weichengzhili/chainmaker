@@ -4,10 +4,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 package lws
 
-type FlushStrategy int
-type FileType int
-
-type WriteFlag int
+type (
+	FlushStrategy int
+	FileType      int
+	WriteFlag     int
+	purgeMod      int
+)
 
 const (
 	WF_SYNCWRITE  WriteFlag = 1                  //同步写，写系统不刷盘
@@ -19,6 +21,11 @@ const (
 const (
 	FT_NORMAL FileType = iota
 	FT_MMAP
+)
+
+const (
+	purgeModSync  purgeMod = 0
+	purgeModAsync purgeMod = 1
 )
 
 type Options struct {

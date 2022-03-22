@@ -8,29 +8,31 @@ import (
 	"errors"
 	"io"
 	"math"
-	"os"
 
 	"chainmaker.org/chainmaker/lws/allocate"
 )
+
+type file interface {
+	WriteAt([]byte, int64) (int, error)
+	ReadAt([]byte, int64) (int, error)
+	Size() int64
+	Close() error
+}
 
 type fixedbuffer struct {
 	mmOff     int64 //buffer对应的文件的偏移量
 	fSize     int64
 	allocator *allocate.BytesAllocator
-	f         *os.File
+	f         file
 	waitSync  area
 	initSize  int
 }
 
-func NewFixedBuffer(f *os.File, bufSize int) (*fixedbuffer, error) {
-	finfo, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
+func NewFixedBuffer(f file, bufSize int) (*fixedbuffer, error) {
 	return &fixedbuffer{
 		allocator: allocate.NewBytesAllocator(0),
 		f:         f,
-		fSize:     finfo.Size(),
+		fSize:     f.Size(),
 		initSize:  bufSize,
 	}, nil
 }

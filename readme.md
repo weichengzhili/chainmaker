@@ -24,8 +24,9 @@ type Options struct {
 	FlushQuota                 int       //刷盘限定值 1000
 	SegmentSize                uint64        //文件的大小限制 默认64M 0 代表不限制
 	Ft                         FileType      //文件类型(1 普通文件 2 mmap) 默认映射方式
-	LogFileLimitForPurge       int           //日志文件数量限制
-	LogEntryCountLimitForPurge int           //日志条目数量限制
+	BufferSize                 int //缓存大小 0代表不加缓存 注：mmapfile下不可为0
+	LogFileLimitForPurge       int           //日志文件数量限制 用于自动清除多余文件，注文件个数包括新创建文件
+	LogEntryCountLimitForPurge int           //日志条目数量限制 用于自动清除日志文件
 	FilePrefix                 string  //日志文件的前缀 
 	FileExtension              string //日志文件的后缀 默认wal
 }
@@ -137,5 +138,14 @@ type Options struct {
    | 80M  |  133ms/op  | 295ms/op |
    | 100M | 179ms/op | 600ms/op |
 
+
+7. lws与"github.com/tidwall/wal"在同步刷盘模式下对比
+	环境 macos 12Core 16Mem
+   | 场景     |lws        |wal |
+   | ----    | ----      | ----      |
+   | 30M   |  54ms/op  |  160ms/op |
+   | 50M  |  85ms/op |  260ms/op |
+   | 80M  |  120ms/op  | 300ms/op |
+   | 100M | 150ms/op | 550ms/op |
 
    

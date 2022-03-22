@@ -108,13 +108,6 @@ func NewSegmentWriter(s *Segment, opt WriterOptions) (*SegmentWriter, error) {
 		return nil, err
 	}
 
-	if sw.f.Size() < int64(sw.segmentSize) {
-		if err := sw.f.Truncate(int64(sw.segmentSize)); err != nil {
-			sw.Close()
-			return nil, err
-		}
-	}
-
 	sw.startFlushWorker()
 	return sw, nil
 }

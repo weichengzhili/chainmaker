@@ -77,12 +77,26 @@ func (it *EntryIterator) SkipToFirst() {
 func (it *EntryIterator) SkipToLast() {
 	it.index = it.container.LastIndex() + 1
 }
+
 func (it *EntryIterator) HasNext() bool {
-	return it.index < it.container.LastIndex()
+	return it.HasNextN(1)
+}
+
+func (it *EntryIterator) HasNextN(n int) bool {
+	return int(it.container.LastIndex()-it.index) >= n
 }
 
 func (it *EntryIterator) Next() *EntryElemnet {
-	it.index++
+	return it.NextN(1)
+}
+
+func (it *EntryIterator) NextN(n int) *EntryElemnet {
+	it.index += uint64(n)
+	return it.element()
+}
+
+func (it *EntryIterator) PreviousN(n int) *EntryElemnet {
+	it.index -= uint64(n)
 	return it.element()
 }
 
@@ -93,13 +107,18 @@ func (it *EntryIterator) element() *EntryElemnet {
 	}
 }
 
+func (it *EntryIterator) HasPreN(n int) bool {
+	return int(it.index-it.container.FirstIndex()) >= n
+}
+
 func (it *EntryIterator) HasPre() bool {
-	return it.index > it.container.FirstIndex()
+	return it.HasPreN(1)
 }
+
 func (it *EntryIterator) Previous() *EntryElemnet {
-	it.index--
-	return it.element()
+	return it.PreviousN(1)
 }
+
 func (it *EntryIterator) Release() {
 	if it.free {
 		return
@@ -117,6 +136,10 @@ func (ele *EntryElemnet) get() (*LogEntry, error) {
 	}
 	ele.data, ele.err = ele.container.GetLogEntry(ele.index)
 	return ele.data, ele.err
+}
+
+func (ele *EntryElemnet) Index() uint64 {
+	return ele.index
 }
 
 func (ele *EntryElemnet) Get() ([]byte, error) {

@@ -220,9 +220,25 @@ func (l *Lws) parseSegmentName(name string) (id uint64, index uint64, err error)
  @return {error} 成功返回nil，错误返回错误详情
 */
 func (l *Lws) Write(typ int8, obj interface{}) error {
+	_, err := l.write(typ, obj)
+	return err
+}
+
+/*
+ @title: WriteRetIndex
+ @description: 将obj对象写入文件
+ @param {int8} typ 写入的数据类型
+ @param {interface{}} obj  数据
+ @return {error} 成功返回entry的索引值&nil, 失败返回0&err
+*/
+func (l *Lws) WriteRetIndex(typ int8, obj interface{}) (uint64, error) {
+	return l.write(typ, obj)
+}
+
+func (l *Lws) write(typ int8, obj interface{}) (uint64, error) {
 	t, data, err := l.encodeObj(typ, obj)
 	if err != nil {
-		return err
+		return 0, nil
 	}
 	var (
 		writeNotice writeNoticeType
@@ -232,16 +248,16 @@ func (l *Lws) Write(typ int8, obj interface{}) error {
 	if l.opts.SegmentSize > 0 && l.sw.Size() > l.opts.SegmentSize {
 		writeNotice |= newFile
 		if err = l.rollover(); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	_, err = l.sw.Write(t, data)
-	if err == nil {
-		writeNotice |= newLog
-		l.lastIndex++
+	if _, err = l.sw.Write(t, data); err != nil {
+		return 0, err
 	}
+	writeNotice |= newLog
+	l.lastIndex++
 	l.writeNotice(writeNotice)
-	return err
+	return l.lastIndex, nil
 }
 
 func (l *Lws) encodeObj(t int8, obj interface{}) (int8, []byte, error) {
@@ -365,7 +381,6 @@ func (l *Lws) purge(limit purgeLimit) error {
  @return {error} 错误信息
 */
 func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
-	//先检测下file是不是符合wal规范
 	reg, err := regexp.Compile(fmt.Sprintf(fileReg, l.opts.FilePrefix, l.opts.FileExtension))
 	if err != nil {
 		return err
@@ -380,7 +395,7 @@ func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
 	sw, err := NewSegmentWriter(&Segment{
 		Path: path.Join(l.path, file),
 	}, WriterOptions{
-		Ft: l.opts.Ft,
+		Ft: FT_NORMAL,
 		Wf: WF_SYNCFLUSH,
 	})
 	if err != nil {
@@ -400,7 +415,7 @@ func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
 		Path:  path,
 		Index: 1,
 		Size:  finfo.Size(),
-	}, l.opts.Ft)
+	}, FT_NORMAL)
 	if err != nil {
 		return nil, err
 	}

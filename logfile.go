@@ -7,10 +7,10 @@ package lws
 import (
 	"encoding/binary"
 	"io"
-	"os"
 	"syscall"
 
 	"chainmaker.org/chainmaker/lws/fbuffer"
+	"chainmaker.org/chainmaker/lws/file"
 	"github.com/pkg/errors"
 )
 
@@ -22,27 +22,46 @@ type fileBuffer interface {
 	Size() int64
 	WriteBack() error
 }
+
+type LwsFile interface {
+	WriteAt([]byte, int64) (int, error)
+	ReadAt([]byte, int64) (int, error)
+	Truncate(int64) error
+	Size() int64
+	Sync() error
+	Close() error
+}
+
 type logfile struct {
-	*os.File
+	LwsFile
 	buf    fileBuffer
 	sync   func() error
 	offset int64
 }
 
-func newLogFile(fn string, ft FileType, segmentSize int64, bufSize int, mlock bool) (*logfile, error) {
-	f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return nil, err
-	}
-	finfo, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if segmentSize > finfo.Size() {
-		if err = f.Truncate(segmentSize); err != nil {
-			f.Close()
+func openFile(fn string, ft FileType, segmentSize int64) (LwsFile, error) {
+	switch ft {
+	case FT_MMAP, FT_NORMAL:
+		f, err := file.NewFile(fn)
+		if err != nil {
 			return nil, err
 		}
+		if segmentSize > 0 && segmentSize > f.Size() {
+			if err = f.Truncate(segmentSize); err != nil {
+				f.Close()
+				return nil, err
+			}
+		}
+		return f, nil
+	default:
+		return nil, errors.New("unsport file type")
+	}
+}
+
+func newLogFile(fn string, ft FileType, segmentSize int64, bufSize int, mlock bool) (*logfile, error) {
+	f, err := openFile(fn, ft, segmentSize)
+	if err != nil {
+		return nil, err
 	}
 	var (
 		fb   fileBuffer
@@ -57,8 +76,9 @@ func newLogFile(fn string, ft FileType, segmentSize int64, bufSize int, mlock bo
 		if bufSize == 0 {
 			return nil, errors.New("mmp size must greater than 0 for mmap file")
 		}
+		nf, _ := f.(*file.NormalFile)
 		var buf *fbuffer.ZeroMmap
-		buf, err = fbuffer.NewZeroMmap(f, bufSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED, mlock)
+		buf, err = fbuffer.NewZeroMmap(nf.File, bufSize, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED, mlock)
 		sync = buf.Sync
 		fb = buf
 	default:
@@ -68,9 +88,9 @@ func newLogFile(fn string, ft FileType, segmentSize int64, bufSize int, mlock bo
 		return nil, err
 	}
 	return &logfile{
-		File: f,
-		buf:  fb,
-		sync: sync,
+		LwsFile: f,
+		buf:     fb,
+		sync:    sync,
 	}, nil
 }
 
@@ -142,7 +162,7 @@ func (f *logfile) readWithBuffer(pos int64) (*LogEntry, error) {
 
 func (f *logfile) readNoBuffer(pos int64) (*LogEntry, error) {
 	lbz := make([]byte, lenSize)
-	_, err := f.File.ReadAt(lbz, pos)
+	_, err := f.LwsFile.ReadAt(lbz, pos)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
@@ -151,7 +171,7 @@ func (f *logfile) readNoBuffer(pos int64) (*LogEntry, error) {
 		return nil, nil
 	}
 	dbz := make([]byte, l)
-	n, err := f.File.ReadAt(dbz, pos+lenSize)
+	n, err := f.LwsFile.ReadAt(dbz, pos+lenSize)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
@@ -183,14 +203,14 @@ func (f *logfile) Sync() error {
 }
 
 func (f *logfile) Truncate(size int64) error {
-	if err := f.File.Truncate(size); err != nil {
+	if err := f.LwsFile.Truncate(size); err != nil {
 		return err
 	}
 	if f.offset > size {
 		f.offset = size
 	}
 	if f.hasBuffer() {
-		return f.buf.Truncate(size)
+		f.buf.Truncate(size)
 	}
 	return nil
 }
@@ -220,18 +240,14 @@ func (f *logfile) Close() error {
 			return err
 		}
 	}
-	return f.File.Close()
+	return f.LwsFile.Close()
 }
 
 func (f *logfile) Size() int64 {
 	if f.hasBuffer() {
 		return f.buf.Size()
 	}
-	finfo, err := f.Stat()
-	if err != nil {
-		return -1
-	}
-	return finfo.Size()
+	return f.LwsFile.Size()
 }
 
 func serializateUint32(b []byte, v uint32) {

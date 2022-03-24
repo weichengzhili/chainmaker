@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -8,6 +10,7 @@ type EntryContainer interface {
 	FirstIndex() uint64
 	LastIndex() uint64
 	GetLogEntry(idx uint64) (*LogEntry, error)
+	GetCoder(int8) (Coder, error)
 	ReaderRelease()
 }
 
@@ -34,6 +37,9 @@ func (wc *walContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	defer sr.Release()
 	return sr.ReadLogByIndex(idx)
 }
+func (wc *walContainer) GetCoder(t int8) (Coder, error) {
+	return wc.wal.coders.GetCoder(t)
+}
 
 func (wc *walContainer) ReaderRelease() {
 	wc.wal.readRelease()
@@ -41,10 +47,14 @@ func (wc *walContainer) ReaderRelease() {
 
 type fileContainer struct {
 	*SegmentReader
+	coders *coderMap
 }
 
 func (fc *fileContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	return fc.ReadLogByIndex(idx)
+}
+func (fc *fileContainer) GetCoder(t int8) (Coder, error) {
+	return fc.coders.GetCoder(t)
 }
 
 func (fc *fileContainer) ReaderRelease() {
@@ -158,7 +168,7 @@ func (ele *EntryElemnet) GetObj() (interface{}, error) {
 	if entry.Typ == RawCoderType {
 		return entry.Data, nil
 	}
-	coder, err := GetCoder(entry.Typ)
+	coder, err := ele.container.GetCoder(entry.Typ)
 	if err != nil {
 		return nil, err
 	}

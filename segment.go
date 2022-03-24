@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -8,6 +10,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -340,10 +343,18 @@ type procConfig struct {
 }
 
 func newSegmentProcessor(pc procConfig) *SegmentProcessor {
+	pc.ft = transformFileType(pc.ft)
 	return &SegmentProcessor{
 		pc:      pc,
 		crc32er: newCrc32er(checkSumPoly), //生成crc计算器
 	}
+}
+
+func transformFileType(ft FileType) FileType {
+	if runtime.GOOS == "windows" && ft == FT_MMAP {
+		return FT_NORMAL
+	}
+	return ft
 }
 
 func (sp *SegmentProcessor) open(s *Segment) error {

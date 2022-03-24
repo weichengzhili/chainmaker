@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -15,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"chainmaker.org/chainmaker/lws/dsl"
 )
 
 var (
@@ -50,6 +54,7 @@ type Lws struct {
 	readCount        int                  //record the count of reading the wal file
 	writeNoticeCh    chan writeNoticeType //notice purge go routine that a new log/a new file has been writed
 	closeCh          chan struct{}
+	coders           *coderMap
 }
 
 /*
@@ -61,24 +66,41 @@ type Lws struct {
  @return {error} 错误信息
 */
 func Open(path string, opt ...Opt) (*Lws, error) {
-	absPath, err := filepath.Abs(path)
+	sl, err := dsl.Parse(path)
 	if err != nil {
 		return nil, err
 	}
+	return OpenWithDSL(sl, opt...)
+}
+
+/*
+ @title: OpenWithDSL
+ @description: open a new lws instance with struct dsl
+ @param {*dsl.DSL} 数据存储定位结构，其中包括协议及路径
+ @param {...Opt} opt 打开日志写入系统的参数配置
+ @return {*Lws} 日志写入系统实例句柄
+ @return {error} 错误信息
+*/
+func OpenWithDSL(sl *dsl.DSL, opt ...Opt) (*Lws, error) {
+	if !dsl.IsSupportedForSchema(sl.Schema) {
+		return nil, dsl.ErrNotSupport
+	}
 
 	lws := &Lws{
-		path:    absPath,
+		path:    sl.Path,
 		opts:    defaultOpts,
 		cond:    sync.NewCond(&sync.Mutex{}),
 		closeCh: make(chan struct{}),
+		coders:  newCoderMap(),
 	}
-	if err = lws.open(opt...); err != nil {
+	if err := lws.open(opt...); err != nil {
 		return nil, err
 	}
 	if lws.opts.LogEntryCountLimitForPurge > 0 || lws.opts.LogFileLimitForPurge > 0 {
 		lws.writeNoticeCh = make(chan writeNoticeType)
 		go lws.cleanStartUp()
 	}
+
 	return lws, nil
 }
 
@@ -276,7 +298,7 @@ func (l *Lws) write(typ int8, obj interface{}) (uint64, error) {
 func (l *Lws) encodeObj(t int8, obj interface{}) (int8, []byte, error) {
 	data, ok := obj.([]byte)
 	if !ok {
-		coder, err := GetCoder(t)
+		coder, err := l.coders.GetCoder(t)
 		if err != nil {
 			return t, nil, err
 		}
@@ -443,6 +465,7 @@ func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
 	return newEntryIterator(
 		&fileContainer{
 			SegmentReader: sr,
+			coders:        l.coders,
 		}), nil
 }
 
@@ -524,6 +547,14 @@ func (l *Lws) cleanStartUp() {
 			return
 		}
 	}
+}
+
+func (l *Lws) RegisterCoder(c Coder) error {
+	return l.coders.RegisterCoder(c)
+}
+
+func (l *Lws) UnregisterCoder(t int8) error {
+	return l.coders.UnregisterCoder(t)
 }
 
 func (l *Lws) Close() {

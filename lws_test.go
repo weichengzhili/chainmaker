@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -8,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,7 +18,7 @@ import (
 )
 
 var (
-	testPath = "./log"
+	testPath, _ = filepath.Abs("./log")
 )
 
 func TestLws_Write(t *testing.T) {
@@ -121,9 +124,9 @@ func (sc *StudentCoder) Decode(data []byte) (interface{}, error) {
 }
 
 func TestLws_WriteReadObj(t *testing.T) {
-	err := RegisterCoder(&StudentCoder{})
-	require.Nil(t, err)
 	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"))
+	require.Nil(t, err)
+	err = l.RegisterCoder(&StudentCoder{})
 	require.Nil(t, err)
 	s := Student{
 		Name:  "lucy",
@@ -147,6 +150,7 @@ func TestLws_WriteReadObj(t *testing.T) {
 			t.Log(obj)
 		}
 	}
+
 	l.Close()
 }
 

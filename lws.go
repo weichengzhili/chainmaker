@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -15,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"chainmaker.org/chainmaker/lws/dsl"
 )
 
 var (
@@ -36,13 +40,6 @@ var (
 	InitIndex = 1
 )
 
-type purgeMod int
-
-const (
-	purgeModSync  purgeMod = 0
-	purgeModAsync purgeMod = 1
-)
-
 type Lws struct {
 	mu               sync.Mutex
 	path             string //base path of log files
@@ -57,6 +54,7 @@ type Lws struct {
 	readCount        int                  //record the count of reading the wal file
 	writeNoticeCh    chan writeNoticeType //notice purge go routine that a new log/a new file has been writed
 	closeCh          chan struct{}
+	coders           *coderMap
 }
 
 /*
@@ -68,24 +66,41 @@ type Lws struct {
  @return {error} 错误信息
 */
 func Open(path string, opt ...Opt) (*Lws, error) {
-	absPath, err := filepath.Abs(path)
+	sl, err := dsl.Parse(path)
 	if err != nil {
 		return nil, err
 	}
+	return OpenWithDSL(sl, opt...)
+}
+
+/*
+ @title: OpenWithDSL
+ @description: open a new lws instance with struct dsl
+ @param {*dsl.DSL} 数据存储定位结构，其中包括协议及路径
+ @param {...Opt} opt 打开日志写入系统的参数配置
+ @return {*Lws} 日志写入系统实例句柄
+ @return {error} 错误信息
+*/
+func OpenWithDSL(sl *dsl.DSL, opt ...Opt) (*Lws, error) {
+	if !dsl.IsSupportedForSchema(sl.Schema) {
+		return nil, dsl.ErrNotSupport
+	}
 
 	lws := &Lws{
-		path:    absPath,
+		path:    sl.Path,
 		opts:    defaultOpts,
 		cond:    sync.NewCond(&sync.Mutex{}),
 		closeCh: make(chan struct{}),
+		coders:  newCoderMap(),
 	}
-	if err = lws.open(opt...); err != nil {
+	if err := lws.open(opt...); err != nil {
 		return nil, err
 	}
 	if lws.opts.LogEntryCountLimitForPurge > 0 || lws.opts.LogFileLimitForPurge > 0 {
 		lws.writeNoticeCh = make(chan writeNoticeType)
 		go lws.cleanStartUp()
 	}
+
 	return lws, nil
 }
 
@@ -96,9 +111,11 @@ func (l *Lws) open(opt ...Opt) error {
 	for _, o := range opt {
 		o(&l.opts)
 	}
+	//构建所有wal文件的segment信息
 	if err = l.buildSegments(); err != nil {
 		return err
 	}
+	//如若没有文件，则初始化起始segment
 	if l.segments.Len() == 0 {
 		l.currentSegmentID = 1
 		l.lastIndex = 0
@@ -110,6 +127,7 @@ func (l *Lws) open(opt ...Opt) error {
 	}
 	currentSegment := l.segments.Last()
 	l.currentSegmentID = currentSegment.ID
+	//根据最新文件的segment信息创建SegmentWriter用于写wal日志
 	l.sw, err = NewSegmentWriter(currentSegment, WriterOptions{
 		SegmentSize: l.opts.SegmentSize,
 		Ft:          l.opts.Ft,
@@ -121,7 +139,9 @@ func (l *Lws) open(opt ...Opt) error {
 	if err != nil {
 		return err
 	}
+	//计算日志条目的最新索引
 	l.lastIndex = currentSegment.Index + uint64(l.sw.EntryCount()) - 1
+	//计算日志条目的起始索引
 	l.firstIndex = l.segments.First().Index
 
 	return nil
@@ -131,13 +151,14 @@ func (l *Lws) buildSegments() error {
 	if err := os.MkdirAll(l.path, 0777); err != nil {
 		return err
 	}
-
+	//根据wal命名规则匹配文件夹下所有wal文件
 	names, err := l.matchFiles()
 	if err != nil {
 		return err
 	}
 	sort.Strings(names)
 	l.segments.Resize(len(names))
+	//为每个文件生成segment信息
 	for i, name := range names {
 		fullPath := path.Join(l.path, name)
 		id, index, err := l.parseSegmentName(name)
@@ -148,12 +169,13 @@ func (l *Lws) buildSegments() error {
 			ID:    id,
 			Index: index,
 			Path:  fullPath,
-			Size:  l.fileSize(fullPath),
+			Size:  l.fileSize(fullPath), //填充每个文件的大小，在读取文件时缓存使用
 		})
 	}
 	return nil
 }
 
+//根据wal命名规则匹配文件夹下所有wal文件
 func (l *Lws) matchFiles() ([]string, error) {
 	reg, err := regexp.Compile(fmt.Sprintf(fileReg, l.opts.FilePrefix, l.opts.FileExtension))
 	if err != nil {
@@ -198,10 +220,12 @@ func (l *Lws) rollover() error {
 	return l.sw.Replace(s)
 }
 
+//segmentName生成wal文件名
 func (l *Lws) segmentName(id, idx uint64) string {
 	return fmt.Sprintf("%s%05d_%d.%s", l.opts.FilePrefix, id, idx, l.opts.FileExtension)
 }
 
+//parseSegmentName 通过wal文件名解析出ID、index信息
 func (l *Lws) parseSegmentName(name string) (id uint64, index uint64, err error) {
 	ss := strings.Split(name[len(l.opts.FilePrefix):], "_")
 	id, err = strconv.ParseUint(ss[0], 10, 64)
@@ -220,34 +244,61 @@ func (l *Lws) parseSegmentName(name string) (id uint64, index uint64, err error)
  @return {error} 成功返回nil，错误返回错误详情
 */
 func (l *Lws) Write(typ int8, obj interface{}) error {
-	t, data, err := l.encodeObj(typ, obj)
+	_, err := l.write(typ, obj)
+	return err
+}
+
+/*
+ @title: WriteBytes
+ @description: 将字节流写入文件
+ @param {[]byte} data  数据
+ @return {error} 成功返回entry的索引值&nil, 失败返回0&err
+*/
+func (l *Lws) WriteBytes(data []byte) (uint64, error) {
+	return l.write(0, data)
+}
+
+/*
+ @title: WriteRetIndex
+ @description: 将obj对象写入文件
+ @param {int8} typ 写入的数据类型
+ @param {interface{}} obj  数据
+ @return {error} 成功返回entry的索引值&nil, 失败返回0&err
+*/
+func (l *Lws) WriteRetIndex(typ int8, obj interface{}) (uint64, error) {
+	return l.write(typ, obj)
+}
+
+func (l *Lws) write(typ int8, obj interface{}) (uint64, error) {
+	t, data, err := l.encodeObj(typ, obj) //序列化obj对象
 	if err != nil {
-		return err
+		return 0, nil
 	}
 	var (
-		writeNotice writeNoticeType
+		writeNotice writeNoticeType //写入通知信息，用于通知purgework有新日志写入
 	)
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	//判断是否需要分割文件
 	if l.opts.SegmentSize > 0 && l.sw.Size() > l.opts.SegmentSize {
-		writeNotice |= newFile
+		writeNotice |= newFile //如果创建新文件则通知信息中加入newFile类型
 		if err = l.rollover(); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	_, err = l.sw.Write(t, data)
-	if err == nil {
-		writeNotice |= newLog
-		l.lastIndex++
+	if _, err = l.sw.Write(t, data); err != nil {
+		return 0, err
 	}
+	writeNotice |= newLog //写log成功则在通知信息中加入newLog类型
+	l.lastIndex++
 	l.writeNotice(writeNotice)
-	return err
+	return l.lastIndex, nil
 }
 
 func (l *Lws) encodeObj(t int8, obj interface{}) (int8, []byte, error) {
 	data, ok := obj.([]byte)
 	if !ok {
-		coder, err := GetCoder(t)
+		coder, err := l.coders.GetCoder(t)
 		if err != nil {
 			return t, nil, err
 		}
@@ -267,6 +318,7 @@ func (l *Lws) encodeObj(t int8, obj interface{}) (int8, []byte, error) {
  @return {*EntryIterator} 日志条目迭代器
 */
 func (l *Lws) NewLogIterator() *EntryIterator {
+	//读请求+1，组织后台清理程序清理文件
 	l.readRequest()
 	it := newEntryIterator(
 		&walContainer{
@@ -311,23 +363,28 @@ func (l *Lws) Purge(opt ...PurgeOpt) error {
 }
 
 func (l *Lws) purge(limit purgeLimit) error {
+	//根据限额指标（文件保留数&日志条目保留数)，创建PurgeWorker
 	pworker := newPurgeWorker(limit)
 	pool := segmentWaterPool{
 		rwlockSegmentGroup: &l.segments,
 		lastIndex:          l.lastIndex,
 	}
+	//探测是否需要进行清理工作，以减少后续的资源竞争
 	if !pworker.Probe(pool) {
 		return nil
 	}
+	//清理加锁，如果加锁失败，说明目前有清理程序正在工作
 	gurder := pworker.Guard()
 	if gurder == nil {
 		return ErrPurgeWorkExisted
 	}
 	defer gurder.Release()
+	//等待wal迭代器都释放掉才可以进行清理工作
 	l.cond.L.Lock()
 	for l.readCount > 0 {
 		l.cond.Wait()
 	}
+	//purgeworker会检测到要清理到的边界文件Segment，lws根据边界文件的信息进行本身状态重置
 	callBack := func(boundary *Segment) {
 		if boundary != nil {
 			l.firstIndex = boundary.Index
@@ -335,7 +392,7 @@ func (l *Lws) purge(limit purgeLimit) error {
 			l.segments.Lock()
 			defer l.segments.Unlock()
 			var at int
-			l.segments.Traverse(func(i int, s *Segment) bool {
+			l.segments.ForEach(func(i int, s *Segment) bool {
 				if s.ID < boundary.ID {
 					if rd := l.readCache.DeleteReader(s.ID); rd != nil {
 						rd.Close()
@@ -365,7 +422,7 @@ func (l *Lws) purge(limit purgeLimit) error {
  @return {error} 错误信息
 */
 func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
-	//先检测下file是不是符合wal规范
+	//检测要写的文件是否与wal命名规则相同，如果相同则阻值
 	reg, err := regexp.Compile(fmt.Sprintf(fileReg, l.opts.FilePrefix, l.opts.FileExtension))
 	if err != nil {
 		return err
@@ -377,10 +434,11 @@ func (l *Lws) WriteToFile(file string, typ int8, obj interface{}) error {
 	if err != nil {
 		return err
 	}
+	//生成文件SegmentWriter对文件进行写入操作，因为一般此操作是一次性操作，故使用了普通文件无缓存的模式
 	sw, err := NewSegmentWriter(&Segment{
 		Path: path.Join(l.path, file),
 	}, WriterOptions{
-		Ft: l.opts.Ft,
+		Ft: FT_NORMAL,
 		Wf: WF_SYNCFLUSH,
 	})
 	if err != nil {
@@ -400,21 +458,24 @@ func (l *Lws) ReadFromFile(file string) (*EntryIterator, error) {
 		Path:  path,
 		Index: 1,
 		Size:  finfo.Size(),
-	}, l.opts.Ft)
+	}, FT_NORMAL)
 	if err != nil {
 		return nil, err
 	}
 	return newEntryIterator(
 		&fileContainer{
 			SegmentReader: sr,
+			coders:        l.coders,
 		}), nil
 }
 
 func (l *Lws) findReaderByIndex(idx uint64) (*refReader, error) {
+	//根据index获取segment信息，如若为nil，说明index不在范围内
 	s := l.findSegmentByIndex(idx)
 	if s == nil {
 		return nil, errors.New("idx out of range")
 	}
+	//从readCache中获取reader，如果不存在则通过传入的函数生成
 	return l.readCache.GetAndNewReader(s.ID, func() (*refReader, error) {
 		sr, err := NewSegmentReader(s, l.opts.Ft)
 		if err != nil {
@@ -463,28 +524,37 @@ func (l *Lws) cleanStartUp() {
 			entryCount = l.lastIndex - l.firstIndex + 1
 		}
 	)
-	reassign()
+	reassign() //初时化文件数目&日志条目数信息
 	for {
 		select {
-		case t := <-l.writeNoticeCh:
+		case t := <-l.writeNoticeCh: //监听到写入通知
 			if t&newLog != 0 {
 				entryCount++
 			}
 			if t&newFile != 0 {
 				fileCount++
 			}
+			//判断是否需要进行文件清理
 			if (l.opts.LogEntryCountLimitForPurge > 0 && entryCount > uint64(l.opts.LogEntryCountLimitForPurge)) ||
 				(l.opts.LogFileLimitForPurge > 0 && fileCount > l.opts.LogFileLimitForPurge) {
 				l.purge(purgeLimit{
 					keepFiles:       l.opts.LogFileLimitForPurge,
 					keepSoftEntries: l.opts.LogEntryCountLimitForPurge,
 				})
-				reassign()
+				reassign() //重置文件数目&日志条目数信息
 			}
 		case <-l.closeCh:
 			return
 		}
 	}
+}
+
+func (l *Lws) RegisterCoder(c Coder) error {
+	return l.coders.RegisterCoder(c)
+}
+
+func (l *Lws) UnregisterCoder(t int8) error {
+	return l.coders.UnregisterCoder(t)
 }
 
 func (l *Lws) Close() {

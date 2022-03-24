@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -8,6 +10,7 @@ type EntryContainer interface {
 	FirstIndex() uint64
 	LastIndex() uint64
 	GetLogEntry(idx uint64) (*LogEntry, error)
+	GetCoder(int8) (Coder, error)
 	ReaderRelease()
 }
 
@@ -34,6 +37,9 @@ func (wc *walContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	defer sr.Release()
 	return sr.ReadLogByIndex(idx)
 }
+func (wc *walContainer) GetCoder(t int8) (Coder, error) {
+	return wc.wal.coders.GetCoder(t)
+}
 
 func (wc *walContainer) ReaderRelease() {
 	wc.wal.readRelease()
@@ -41,10 +47,14 @@ func (wc *walContainer) ReaderRelease() {
 
 type fileContainer struct {
 	*SegmentReader
+	coders *coderMap
 }
 
 func (fc *fileContainer) GetLogEntry(idx uint64) (*LogEntry, error) {
 	return fc.ReadLogByIndex(idx)
+}
+func (fc *fileContainer) GetCoder(t int8) (Coder, error) {
+	return fc.coders.GetCoder(t)
 }
 
 func (fc *fileContainer) ReaderRelease() {
@@ -77,12 +87,26 @@ func (it *EntryIterator) SkipToFirst() {
 func (it *EntryIterator) SkipToLast() {
 	it.index = it.container.LastIndex() + 1
 }
+
 func (it *EntryIterator) HasNext() bool {
-	return it.index < it.container.LastIndex()
+	return it.HasNextN(1)
+}
+
+func (it *EntryIterator) HasNextN(n int) bool {
+	return int(it.container.LastIndex()-it.index) >= n
 }
 
 func (it *EntryIterator) Next() *EntryElemnet {
-	it.index++
+	return it.NextN(1)
+}
+
+func (it *EntryIterator) NextN(n int) *EntryElemnet {
+	it.index += uint64(n)
+	return it.element()
+}
+
+func (it *EntryIterator) PreviousN(n int) *EntryElemnet {
+	it.index -= uint64(n)
 	return it.element()
 }
 
@@ -93,13 +117,18 @@ func (it *EntryIterator) element() *EntryElemnet {
 	}
 }
 
+func (it *EntryIterator) HasPreN(n int) bool {
+	return int(it.index-it.container.FirstIndex()) >= n
+}
+
 func (it *EntryIterator) HasPre() bool {
-	return it.index > it.container.FirstIndex()
+	return it.HasPreN(1)
 }
+
 func (it *EntryIterator) Previous() *EntryElemnet {
-	it.index--
-	return it.element()
+	return it.PreviousN(1)
 }
+
 func (it *EntryIterator) Release() {
 	if it.free {
 		return
@@ -119,6 +148,10 @@ func (ele *EntryElemnet) get() (*LogEntry, error) {
 	return ele.data, ele.err
 }
 
+func (ele *EntryElemnet) Index() uint64 {
+	return ele.index
+}
+
 func (ele *EntryElemnet) Get() ([]byte, error) {
 	entry, err := ele.get()
 	if err != nil {
@@ -135,7 +168,7 @@ func (ele *EntryElemnet) GetObj() (interface{}, error) {
 	if entry.Typ == RawCoderType {
 		return entry.Data, nil
 	}
-	coder, err := GetCoder(entry.Typ)
+	coder, err := ele.container.GetCoder(entry.Typ)
 	if err != nil {
 		return nil, err
 	}

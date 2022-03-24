@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package allocate
@@ -18,6 +20,7 @@ func NewBytesAllocator(cap int) *BytesAllocator {
 	}
 }
 
+//AllocAt 在分配器中获取[offset:offset+n)范围内的缓存区, 如果offset不在分配器范围则返回END错误，如果offset+n超过分配器上限，则返回的缓存区大小将会小于n
 func (bsa *BytesAllocator) AllocAt(offset int64, n int) ([]byte, error) {
 	if offset < 0 {
 		return nil, errors.New(strNegativeOffset)

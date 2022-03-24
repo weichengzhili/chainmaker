@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package lws
@@ -7,17 +9,16 @@ package lws
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"chainmaker.org/chainmaker/lws/file"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	testPath = "./log"
+	testPath, _ = filepath.Abs("./log")
 )
 
 func TestLws_Write(t *testing.T) {
@@ -26,55 +27,36 @@ func TestLws_Write(t *testing.T) {
 	// data := []byte("hello world")
 	rand.Seed(time.Now().Unix())
 
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 100; i++ {
 		data := []byte(fmt.Sprintf("hello world_%d", rand.Int()))
 		err = l.Write(0, data)
 		require.Nil(t, err)
 	}
-	// l.Purge(PurgeWithSoftEntries(10))
+	l.Purge(PurgeWithSoftEntries(100))
 	l.Close()
 	require.Nil(t, err)
 }
 
 func TestLws_Read(t *testing.T) {
-	l, err := Open(testPath, WithFilePrex("test_"), WithSegmentSize(50), WithWriteFileType(FT_NORMAL), WithBufferSize(0))
+	l, err := Open(testPath, WithFilePrex("test_"), WithSegmentSize(80), WithWriteFileType(FT_NORMAL))
 	require.Nil(t, err)
 	it := l.NewLogIterator()
 	defer it.Release()
-	for it.HasNext() {
-		data, err := it.Next().Get()
+	it.SkipToLast()
+	for it.HasPreN(100) {
+		ele := it.PreviousN(100)
+		data, err := ele.Get()
 		if err != nil {
 			t.Log("err:", err)
 		} else {
-			t.Log(string(data))
+			t.Log("index:", ele.Index(), "----", string(data))
 		}
 	}
 	l.Close()
 }
 
-func TestFileRead(t *testing.T) {
-	f, err := file.NewFile("./log/test_00002_3.wal")
-	require.Nil(t, err)
-	data := make([]byte, 40)
-	// for {
-	n, err := f.Read(data)
-	if err != nil {
-		if err == io.EOF {
-			t.Logf("readN: %d, data:%s", n, data[:n])
-			err = nil
-		}
-		require.Nil(t, err)
-		// break
-	}
-
-	t.Logf("readN: %d, data:%s", n, data[:n])
-	// }
-	err = f.Close()
-	require.Nil(t, err)
-}
-
 func TestLws_WriteFile(t *testing.T) {
-	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"), WithWriteFlag(WF_SYNCFLUSH, 0), WithFileLimitForPurge(3))
+	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"), WithFileLimitForPurge(3))
 	require.Nil(t, err)
 	data := []byte("hello world@##########################################################@@")
 	err = l.WriteToFile("test_file.wal", 0, data)
@@ -142,9 +124,9 @@ func (sc *StudentCoder) Decode(data []byte) (interface{}, error) {
 }
 
 func TestLws_WriteReadObj(t *testing.T) {
-	err := RegisterCoder(&StudentCoder{})
-	require.Nil(t, err)
 	l, err := Open(testPath, WithSegmentSize(30), WithFilePrex("test_"))
+	require.Nil(t, err)
+	err = l.RegisterCoder(&StudentCoder{})
 	require.Nil(t, err)
 	s := Student{
 		Name:  "lucy",
@@ -168,6 +150,7 @@ func TestLws_WriteReadObj(t *testing.T) {
 			t.Log(obj)
 		}
 	}
+
 	l.Close()
 }
 

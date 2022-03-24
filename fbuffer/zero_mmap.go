@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package fbuffer
@@ -25,9 +27,9 @@ var (
 type ZeroMmap struct {
 	f         *os.File //映射的文件
 	fSize     int64    //文件大小
-	waitSync  area
-	mmSize    int
-	mmOff     int64
+	waitSync  area     //待刷盘的区域
+	mmSize    int      //映射区大小
+	mmOff     int64    //映射区偏移量
 	allocator *allocate.MmapAllocator
 }
 type area struct {
@@ -52,6 +54,7 @@ func NewZeroMmap(f *os.File, mmSize int, mapPort, mapFlag int, lock bool) (*Zero
 	}, nil
 }
 
+//Truncate 同步文件的大小，一般对文件进行Truncate的时候，同步调用buffer.Truncate,fSize防止从映射区中读取的数据超出文件大小
 func (zm *ZeroMmap) Truncate(size int64) error {
 	if size < 0 {
 		return errors.New(strInvaildArg)
@@ -60,10 +63,12 @@ func (zm *ZeroMmap) Truncate(size int64) error {
 	return nil
 }
 
+//ReadAt 从offset处读取n个字节，除非读到文件末尾，否则读取到的长度一定为n, 其主要用来读取文件的内容
 func (zm *ZeroMmap) ReadAt(offset int64, n int) ([]byte, error) {
 	return zm.readAt(offset, n)
 }
 
+//NextAt 从offset处获取n个字节，如果参数合法，则获取到bytes长度一定为n, offset可以比当前文件的size大，获取的bytes用于写入数据
 func (zm *ZeroMmap) NextAt(offset int64, n int) ([]byte, error) {
 	if offset < 0 {
 		return nil, errors.New(strNegativeOffset)
@@ -108,13 +113,15 @@ func (zm *ZeroMmap) readAt(offset int64, n int) (data []byte, err error) {
 				return nil, syscall.EAGAIN
 			}
 			zm.mmOff = offset
+			zm.waitSync = area{}
 			continue
 		}
 		return
 	}
 }
 
-//nextAt 会对文件进行扩展
+//nextAt 如果获取的数据超过了文件的长度，则先Truncate文件，以防止映射区写入出错，然后再重新映射；获取到缓存后，会将缓存对应的区域合并到waitSync， 以在上层调用刷盘的时候，将waitSync标记的区域内的数据刷新到磁盘
+//因为在每次重映射的时候会系统会主动将映射区数据同步到底层文件，故waitSync会在重映射时重置
 func (zm *ZeroMmap) nextAt(offset int64, n int) ([]byte, error) {
 	var (
 		nextEnd = offset + int64(n)
@@ -137,6 +144,7 @@ func (zm *ZeroMmap) nextAt(offset int64, n int) ([]byte, error) {
 				return nil, syscall.EAGAIN
 			}
 			zm.mmOff = offset
+			zm.waitSync = area{}
 			continue
 		}
 		zm.waitSync = mergeArea(zm.waitSync, area{
@@ -151,7 +159,9 @@ func (zm *ZeroMmap) WriteBack() error {
 	return nil
 }
 
+//Sync 将映射区的数据刷新到磁盘
 func (zm *ZeroMmap) Sync() error {
+	//为安全期间，获取waitSync和映射区的交集范围
 	overlap := overlapArea(zm.waitSync, area{
 		off: zm.mmOff,
 		len: zm.allocator.Size(),
@@ -159,6 +169,7 @@ func (zm *ZeroMmap) Sync() error {
 	if overlap.len == 0 {
 		return nil
 	}
+	//将交集的offset进行页对齐，防止sync失败
 	off := int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
 	overlap = area{
 		off: off,
@@ -175,12 +186,11 @@ func (zm *ZeroMmap) Sync() error {
 	if err := unix.Msync(buf, unix.MS_SYNC); err != nil {
 		return err
 	}
-	zm.waitSync = area{
-		off: overlap.off + int64(overlap.len),
-	}
+	zm.waitSync = area{}
 	return nil
 }
 
+//Close 释放分配器
 func (zm *ZeroMmap) Close() error {
 	if zm.allocator != nil {
 		zm.allocator.Release()
@@ -195,17 +205,6 @@ func (zm *ZeroMmap) Size() int64 {
 		return -1
 	}
 	return info.Size()
-}
-
-func fileFlagToMapPort(flag int) int {
-	port := syscall.PROT_READ
-	if flag&os.O_WRONLY == os.O_WRONLY {
-		port = syscall.PROT_WRITE
-	}
-	if flag&os.O_RDWR == os.O_RDWR {
-		port |= syscall.PROT_READ | syscall.PROT_WRITE
-	}
-	return port
 }
 
 func mergeArea(a area, b area) area {

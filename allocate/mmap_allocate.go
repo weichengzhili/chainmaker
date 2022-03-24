@@ -1,5 +1,7 @@
 /*
+Copyright (C) BABEC. All rights reserved.
 Copyright (C) THL A29 Limited, a Tencent company. All rights reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 package allocate
@@ -17,11 +19,11 @@ var (
 )
 
 type MmapAllocator struct {
-	mmapInfo
+	mmapInfo          //当前映射区信息
 	f        *os.File //映射的文件
-	mmapPort int
-	mmapFlag int
-	mmapLock bool
+	mmapPort int      //映射所需的内存保护，如内存可读可写可执行权限
+	mmapFlag int      //映射标识，如内存是否共享，修改是否更新到底层文件
+	mmapLock bool     //映射是否锁定内存
 }
 
 type mmapInfo struct {
@@ -47,23 +49,17 @@ func NewMmapAllocator(f *os.File, offset int64, mmSize int, mapPort, mapFlag int
 	return allocator, nil
 }
 
-func mmap(fd int, offset int64, size int, port int, flag int, lock bool) (_ mmapInfo, err error) {
-	// size = int(alignUp(uint64(size), uint64(OsPageSize)))
+//mmap 会对fd指向的文件进行内存映射处理，内部进行内存对齐计算，偏移量对系统页向下对齐， size在保持不缩减的情况下，对系统页向上对齐
+func mmap(fd int, offset int64, size int, port int, flag int) (_ mmapInfo, err error) {
 	end := offset + int64(size)
 	offset = int64(alignDown(uint64(offset), uint64(OsPageSize)))
-	size = int(alignUp(uint64(end-offset), uint64(OsPageSize))) //避免分配的内存缩水
+	size = int(alignUp(uint64(end-offset), uint64(OsPageSize))) //避免分配的内存缩水，如offset向下对齐，此时offset+size可能会变小
 	var (
 		area []byte
 	)
 	area, err = syscall.Mmap(fd, offset, size, port, flag)
 	if err != nil {
 		return
-	}
-	if lock {
-		err = syscall.Mlock(area)
-		if err != nil {
-			return
-		}
 	}
 	return mmapInfo{
 		mmArea: area,
@@ -72,6 +68,7 @@ func mmap(fd int, offset int64, size int, port int, flag int, lock bool) (_ mmap
 	}, nil
 }
 
+//remap 映射区置换，根据offset&size创建新的映射区，并释放旧的映射区
 func (mal *MmapAllocator) remap(offset int64, size int) error {
 	var (
 		err error
@@ -83,7 +80,7 @@ func (mal *MmapAllocator) remap(offset int64, size int) error {
 		offset = 0
 	}
 
-	mmi, err := mmap(fd, offset, size, mal.mmapPort, mal.mmapFlag, mal.mmapLock)
+	mmi, err := mmap(fd, offset, size, mal.mmapPort, mal.mmapFlag)
 	if err != nil {
 		return err
 	}
@@ -105,6 +102,7 @@ func (mal *MmapAllocator) remap(offset int64, size int) error {
 	return nil
 }
 
+//AllocAt 在映射区中获取[offset:offset+n)范围内的缓存区, 如果offset不在映射区范围则返回END错误，如果offset+n超过映射区上线，则返回的缓存区大小将会小于n
 func (mal *MmapAllocator) AllocAt(offset int64, n int) ([]byte, error) {
 	if offset < 0 {
 		return nil, errors.New(strNegativeOffset)
@@ -127,10 +125,12 @@ func (mal *MmapAllocator) allocAt(offset int64, n int) ([]byte, error) {
 	return mal.mmArea[from : from+int64(n)], nil
 }
 
+//Size 当前映射区的大小
 func (mal *MmapAllocator) Size() int {
 	return len(mal.mmArea)
 }
 
+//Release 释放映射区
 func (mal *MmapAllocator) Release() {
 	if mal.mmArea != nil {
 		syscall.Munmap(mal.mmArea)
@@ -138,6 +138,7 @@ func (mal *MmapAllocator) Release() {
 	}
 }
 
+//Resize 重映射映射区
 func (mal *MmapAllocator) Resize(foffset int64, mmSize int) error {
 	return mal.remap(foffset, mmSize)
 }

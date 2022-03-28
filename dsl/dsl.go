@@ -16,6 +16,7 @@ var (
 	protoDelimiter = "://"
 	ErrFormat      = errors.New("invalid protocol format")
 	ErrNotSupport  = errors.New("unsupported protocol")
+	ErrInvaildPath = errors.New("invaild path")
 )
 
 //DSL data store location
@@ -26,6 +27,9 @@ type DSL struct {
 
 //Parse parse string p to a DSL
 func Parse(p string) (*DSL, error) {
+	if len(p) == 0 {
+		return nil, ErrInvaildPath
+	}
 	ps := strings.Split(p, protoDelimiter)
 	l := len(ps)
 	if l > 2 {
@@ -33,13 +37,21 @@ func Parse(p string) (*DSL, error) {
 	}
 	//if has no prefix xxx://，maybe it's a local file path
 	if l == 1 {
-		if filepath.IsAbs(ps[0]) {
-			return &DSL{
-				Schema: "file",
-				Path:   ps[0],
-			}, nil
+		var (
+			p   = ps[0]
+			err error
+		)
+		if !filepath.IsAbs(ps[0]) {
+			p, err = filepath.Abs(ps[0])
+			if err != nil {
+				return nil, err
+			}
 		}
-		return nil, errors.New("not an absolute path")
+		return &DSL{
+			Schema: "file",
+			Path:   p,
+		}, nil
+
 	}
 	return &DSL{
 		Schema: strings.ToLower(ps[0]),

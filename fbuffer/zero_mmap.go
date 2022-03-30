@@ -13,7 +13,6 @@ import (
 	"syscall"
 
 	"chainmaker.org/chainmaker/lws/allocate"
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -162,30 +161,31 @@ func (zm *ZeroMmap) WriteBack() error {
 //Sync 将映射区的数据刷新到磁盘
 func (zm *ZeroMmap) Sync() error {
 	//为安全期间，获取waitSync和映射区的交集范围
-	overlap := overlapArea(zm.waitSync, area{
-		off: zm.mmOff,
-		len: zm.allocator.Size(),
-	})
-	if overlap.len == 0 {
-		return nil
-	}
-	//将交集的offset进行页对齐，防止sync失败
-	off := int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
-	overlap = area{
-		off: off,
-		len: int(overlap.off-off) + overlap.len,
-	}
-	buf, err := zm.allocator.AllocAt(overlap.off, overlap.len)
-	if err != nil {
-		if err == allocate.End {
-			return nil
-		}
-		return err
-	}
+	// overlap := overlapArea(zm.waitSync, area{
+	// 	off: zm.mmOff,
+	// 	len: zm.allocator.Size(),
+	// })
+	// if overlap.len == 0 {
+	// 	return nil
+	// }
+	// //将交集的offset进行页对齐，防止sync失败
+	// off := int64(alignDown(uint64(overlap.off), uint64(OsPageSize)))
+	// overlap = area{
+	// 	off: off,
+	// 	len: int(overlap.off-off) + overlap.len,
+	// }
+	// buf, err := zm.allocator.AllocAt(overlap.off, overlap.len)
+	// if err != nil {
+	// 	if err == allocate.End {
+	// 		return nil
+	// 	}
+	// 	return err
+	// }
 
-	if err := unix.Msync(buf, unix.MS_SYNC); err != nil {
-		return err
-	}
+	// if err := unix.Msync(buf, unix.MS_SYNC); err != nil {
+	// 	return err
+	// }
+	zm.allocator.Release()
 	zm.waitSync = area{}
 	return nil
 }

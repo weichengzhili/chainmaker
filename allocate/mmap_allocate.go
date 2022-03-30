@@ -114,7 +114,7 @@ func (mal *MmapAllocator) allocAt(offset int64, n int) ([]byte, error) {
 	var (
 		mmEnd = mal.mmOff + int64(mal.mmSize)
 	)
-	if offset >= mmEnd || offset < mal.mmOff {
+	if mal.mmArea == nil || offset >= mmEnd || offset < mal.mmOff {
 		return nil, End
 	}
 
